@@ -22,3 +22,34 @@ html{scroll-padding-top:90px} section[id],#main{scroll-margin-top:90px}
 @media(max-width:1050px){.enterprise-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.enterprise-intro{grid-template-columns:1fr;gap:10px}}
 @media(max-width:620px){.enterprise-grid{grid-template-columns:1fr}.enterprise-card{min-height:240px}.enterprise-intro h2{font-size:50px}.milestone-list>div{grid-template-columns:85px 1fr;gap:10px}.enterprises{padding-bottom:56px}}
 @media(prefers-reduced-motion:reduce){.enterprise-card{transition:none}}
+/* Optional ship-to-terminal 3D view. Component tokens bind to the existing :root palette. */
+.ship3d-entry{pointer-events:auto;display:inline-flex;vertical-align:middle;align-items:center;gap:12px;min-height:44px;margin:0 0 0 28px;padding:11px 18px;border:1px solid #a4baba6e;border-radius:100px;background:#081f2680;color:#f0f3e9;font-size:12px;cursor:pointer;transition:border-color .3s}
+.ship3d-entry[hidden]{display:none}
+.ship3d-entry:hover{border-color:var(--accent)}
+.ship3d-entry[aria-busy=true]{cursor:progress;opacity:.8}
+.ship3d-entry-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);box-shadow:0 0 12px #d7f46c9b}
+.ship3d-entry-meta{font-size:9px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted)}
+.ship3d{--x3d-surface:var(--ink);--x3d-text:var(--cream);--x3d-accent:var(--accent);--x3d-muted:var(--muted);--x3d-line:#426069;--x3d-gutter:clamp(18px,4vw,56px);position:fixed;inset:0;z-index:100;display:grid;grid-template-rows:auto 1fr auto auto;background:var(--x3d-surface);color:var(--x3d-text);overflow:hidden}
+.ship3d:focus{outline:none}
+.ship3d-stage{position:absolute;inset:0;touch-action:pan-y}
+.ship3d-stage canvas{display:block;width:100%;height:100%}
+.ship3d-notice{position:absolute;z-index:3;left:50%;top:38%;transform:translate(-50%,-50%);width:min(420px,86vw);margin:0;padding:18px 20px;background:#0c2b35;border:1px solid var(--x3d-line);font-size:14px;line-height:1.6;text-align:center}
+.ship3d-top{position:relative;z-index:2;grid-row:1;display:flex;justify-content:space-between;align-items:flex-start;gap:16px;padding:22px var(--x3d-gutter) 34px;background:linear-gradient(180deg,#081f26f2 0%,#081f26c7 55%,transparent)}
+.ship3d-top h2{font:700 12px Manrope,sans-serif;letter-spacing:.16em;text-transform:uppercase;margin:0 0 6px}
+.ship3d-disclaimer{margin:0;font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--x3d-muted)}
+.ship3d-exit{flex:none;display:flex;align-items:center;gap:14px;min-height:44px;padding:10px 18px;border:1px solid #a4baba6e;border-radius:100px;background:#081f26b3;color:var(--x3d-text);font-size:12px;cursor:pointer}
+.ship3d-exit span{font-size:9px;letter-spacing:.14em;color:var(--x3d-muted)}
+.ship3d-exit:hover{border-color:var(--x3d-accent)}
+.ship3d-panel{position:relative;z-index:2;grid-row:3;max-width:470px;margin:0 var(--x3d-gutter);padding:20px 24px;background:#081f26e0;border:1px solid var(--x3d-line)}
+.ship3d-meta{display:flex;gap:16px;margin:0 0 10px;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--x3d-accent)}
+.ship3d-panel h3{margin:0 0 10px;font:700 clamp(18px,2.2vw,26px)/1.15 Manrope,sans-serif;letter-spacing:.06em}
+.ship3d-panel #ship3dText{margin:0;font-size:14px;line-height:1.65;color:#b9ccc9}
+.ship3d-controls{position:relative;z-index:2;grid-row:4;display:flex;align-items:center;gap:14px;padding:16px var(--x3d-gutter) 24px}
+.ship3d-controls button{display:grid;place-items:center;width:48px;height:48px;border:1px solid #a4baba6e;border-radius:50%;background:#081f26b3;color:var(--x3d-text);font-size:18px;cursor:pointer}
+.ship3d-controls button:hover{border-color:var(--x3d-accent)}
+.ship3d-controls button[aria-disabled=true]{opacity:.35;cursor:default}
+.ship3d-bars{display:flex;gap:6px}
+.ship3d-bars span{width:28px;height:2px;background:#ffffff33}
+.ship3d-bars span.is-active{background:var(--x3d-accent)}
+.ship3d[data-state=fallback] .ship3d-top{background:none}
+@media(max-width:600px){.ship3d-entry{display:flex;width:fit-content;margin:18px 0 0}.ship3d-top{padding-top:16px;padding-bottom:16px}.ship3d-top h2{font-size:11px}.ship3d-panel{padding:16px 18px}.ship3d-panel #ship3dText{font-size:13px}.ship3d-bars span{width:20px}}

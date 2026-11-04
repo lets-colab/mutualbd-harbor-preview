@@ -47,6 +47,37 @@
     selector('contactStatus').textContent = 'Contact delivery is disabled in this concept. Confirm the authorized address and form handling before publication.';
   });
 
+  // Optional ship-to-terminal 3D view: offered only where WebGL works, loaded only on request.
+  const webglAvailable = () => {
+    try {
+      const gl = document.createElement('canvas').getContext('webgl');
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+      return !!gl;
+    } catch (error) { return false; } // Treat a throwing probe as no WebGL; the page needs nothing from it.
+  };
+  const entry = selector('ship3dEntry');
+  if (entry && webglAvailable()) {
+    const label = entry.querySelector('.ship3d-entry-label');
+    const idleLabel = label.textContent;
+    const stops = [['Arrival', 0], ['Berth', 3], ['Clearance', 1], ['Onward', 2]]
+      .map(([stage, i]) => ({ stage, title: services[i][0], text: services[i][1] }));
+    entry.hidden = false;
+    entry.addEventListener('click', async () => {
+      if (entry.getAttribute('aria-busy') === 'true') return;
+      entry.setAttribute('aria-busy', 'true');
+      label.textContent = 'Preparing the 3D harbor…';
+      try {
+        const viewer = await import('./ship3d.js');
+        label.textContent = idleLabel;
+        viewer.open({ stops, returnFocus: entry });
+      } catch (error) {
+        label.textContent = '3D view unavailable right now'; // Module blocked or offline; the page itself is unaffected.
+      } finally {
+        entry.removeAttribute('aria-busy');
+      }
+    });
+  }
+
   const canvas = selector('harborCanvas');
   const stage = document.querySelector('.harbor-stage');
   if (!canvas || !stage || !canvas.getContext) return;
