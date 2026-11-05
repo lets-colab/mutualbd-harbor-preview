@@ -1,89 +1,135 @@
-// MutualBD Voyage — chapter controller and footage compositor (concept).
-// Content lives in the HTML; this module only adds the moving backdrop, intro and navigation state.
+// MutualBD Voyage — scroll-scrubbed footage, chapter controller and navigation (concept).
+// Content lives in the HTML. Scroll is the playhead: each section owns a frame range of one clip,
+// and the scene follows the scroll with inertia, forward and back.
 
 const root = document.documentElement;
 root.classList.add('js');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const finePointer = matchMedia('(pointer: fine)').matches;
-const saveData = navigator.connection?.saveData === true;
 root.dataset.motion = reduced ? 'reduced' : 'full';
 
+// Frame set: 16:9 for landscape screens, a 9:16 crop that follows the ship or truck for portrait screens.
+const SET = innerWidth / innerHeight < 0.9 ? 'm' : 'd';
+const CLIP_ORDER = ['sea', 'journey', 'river'];
+
 // ---------------------------------------------------------------- scene ontology
-// Footage generated for the concept (Google Flow). Each chapter is a framing of one clip:
-// crop = [x, y, w, h] of the source frame (0–1, top-left), zoom = [start, end] over the chapter hold,
-// focus = point kept in view on narrow screens (0–1 within the crop), dim = exposure.
-const MEDIA = {
-  sea: 'media/sea',           // container ship at sea, aerial
-  terminal: 'media/terminal', // container yard and terminal gate
-  river: 'media/river',       // coastal vessel on a river
-  road: 'media/road',         // truck on the coastal highway
+// f = frame range across the section's hold; zoom = camera push; focus = point kept in frame (0–1);
+// exit = how the next section arrives: 'continue' keeps the same shot moving, 'tide' rises the next shot from below
+// while this one pushes in toward `toward`.
+const SCENES = {
+  prologue: { clip: 'sea', f: [0, 36], zoom: [1.02, 1.08], focus: [0.55, 0.5], exit: 'tide', toward: [0.72, 0.16], fadeIn: [0.7, 0.92] }, // the 3D globe leads; the sea rises in as the camera dives
+  arrival: { clip: 'journey', f: [0, 39], zoom: [1.0, 1.05], focus: [0.5, 0.5], exit: 'continue' },
+  berth: { clip: 'journey', f: [39, 102], zoom: [1.05, 1.03], focus: [0.5, 0.5], exit: 'continue' },
+  clearance: { clip: 'journey', f: [102, 120], zoom: [1.03, 1.06], focus: [0.42, 0.52], exit: 'tide', toward: [0.36, 0.55] },
+  river: { clip: 'river', f: [0, 76], zoom: [1.02, 1.1], focus: [0.6, 0.5], exit: 'tide', toward: [0.6, 0.45] },
+  road: { clip: 'journey', f: [120, 147], zoom: [1.02, 1.06], focus: [0.45, 0.5], exit: 'continue' },
+  group: { clip: 'journey', f: [149, 149], zoom: [1.08, 1.12], focus: [0.62, 0.4], dim: 0.3, exit: 'continue' },
+  contact: { clip: 'journey', f: [149, 149], zoom: [1.12, 1.16], focus: [0.62, 0.4], dim: 0.34 },
 };
-const SCENES = [
-  { media: 'sea', crop: [0, 0, 1, 1], zoom: [1.06, 1.18], focus: [0.5, 0.45], dim: 1 },            // 01 Since 1962
-  { media: 'sea', crop: [0.18, 0.02, 0.62, 0.62], zoom: [1.0, 1.14], focus: [0.55, 0.5], dim: 1.05 }, // 02 Arrival — Mutual Shipping
-  { media: 'terminal', crop: [0.3, 0.06, 0.6, 0.6], zoom: [1.0, 1.1], focus: [0.62, 0.4], dim: 1.05 }, // 03 Berth — cranes, quay lights and gate
-  { media: 'terminal', crop: [0, 0, 1, 1], zoom: [1.02, 1.14], focus: [0.62, 0.5], dim: 1 },          // 04 Clearance — yard and gate
-  { media: 'river', crop: [0, 0, 1, 1], zoom: [1.02, 1.14], focus: [0.62, 0.5], dim: 1 },             // 05 River — Central Navigation
-  { media: 'road', crop: [0, 0, 1, 1], zoom: [1.02, 1.12], focus: [0.55, 0.6], dim: 1 },              // 06 Road — Modern Logistics
-  { media: 'road', crop: [0.42, 0.14, 0.58, 0.58], zoom: [1.0, 1.1], focus: [0.5, 0.45], dim: 0.9 },  // 07 Beyond — the lit port and city edge
-  { media: 'sea', crop: [0, 0, 1, 1], zoom: [1.22, 1.3], focus: [0.5, 0.5], dim: 0.5 },               // The group
-  { media: 'sea', crop: [0, 0, 1, 1], zoom: [1.3, 1.38], focus: [0.5, 0.5], dim: 0.45 },              // Contact
-];
 
 const $ = (s) => document.querySelector(s);
 const sections = [...document.querySelectorAll('main .chapter')];
+const story = sections.filter((s) => !s.classList.contains('chapter-plain'));
+const rail = $('.rail');
 const railLinks = [...document.querySelectorAll('.rail a')];
-const canvas = $('#scene');
-const intro = $('#intro');
+const railNow = $('.rail-now');
+const introEl = $('#intro');
 
-// ---------------------------------------------------------------- chapter position
-let tops = [];
-function measure() { tops = sections.map((s) => s.getBoundingClientRect().top + scrollY); }
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const lerp2 = (a, b, t) => [lerp(a[0], b[0], t), lerp(a[1], b[1], t)];
+const ease = (x) => x * x * (3 - 2 * x);
+const smooth = (a, b, x) => ease(clamp((x - a) / (b - a)));
+let threeOn = false; // set once the 3D components are loaded
 
-/** Scroll → { a, b, p, mix, active } where a/b are scene indices, p the hold progress of a, mix the a→b transition. */
-function position() {
-  const y = scrollY, h = innerHeight, n = sections.length;
+// ---------------------------------------------------------------- geometry and timeline
+let tops = [], heights = [];
+function measure() {
+  tops = sections.map((s) => s.getBoundingClientRect().top + scrollY);
+  heights = sections.map((s) => s.offsetHeight);
+}
+/** Position y (document px) → section index i, hold progress p (0–1) and transition progress t (0–1) into i+1. */
+function locate(y) {
+  const n = sections.length;
   let i = 0;
   while (i < n - 1 && y >= tops[i + 1]) i++;
-  const holdEnd = i < n - 1 ? tops[i + 1] - h : Infinity;
-  const p = Math.min(1, Math.max(0, (y - tops[i]) / Math.max(1, Math.min(holdEnd, tops[i] + h) - tops[i])));
-  const mix = i < n - 1 && y > holdEnd ? Math.min(1, (y - holdEnd) / h) : 0;
-  let active = 0;
-  for (let k = 0; k < n; k++) if (tops[k] <= y + h * 0.5) active = k;
-  return { a: i, b: Math.min(i + 1, n - 1), p, mix, active };
+  const hold = Math.max(1, heights[i] - innerHeight);
+  const local = y - tops[i];
+  const gap = i < n - 1 ? Math.max(1, tops[i + 1] - tops[i] - hold) : 1;
+  return { i, p: clamp(local / hold), t: i < n - 1 ? clamp((local - hold) / gap) : 0 };
 }
-
-let lastActive = -1;
-function updateChrome(pos) {
-  if (pos.active === lastActive) return;
-  lastActive = pos.active;
-  sections.forEach((s, k) => s.classList.toggle('in', k === pos.active));
-  const id = sections[pos.active].id;
-  railLinks.forEach((a) => (a.getAttribute('href') === `#${id}` ? a.setAttribute('aria-current', 'step') : a.removeAttribute('aria-current')));
-  renderer?.chapter?.(pos.active);
+function shot(spec, p) {
+  const focus = SET === 'm' ? [0.5, spec.focus[1]] : spec.focus;
+  const fade = spec.fadeIn && threeOn ? smooth(spec.fadeIn[0], spec.fadeIn[1], p) : 1;
+  return { clip: spec.clip, frame: lerp(spec.f[0], spec.f[1], p), zoom: lerp(spec.zoom[0], spec.zoom[1], p), focus, dim: (spec.dim ?? 1) * fade };
 }
-
-// ---------------------------------------------------------------- renderers (same interface)
-// { start(onReady), frame(pos, time), chapter(i), stop() }
-
-function backdropRenderer() {
-  const layers = [$('#backdropA'), $('#backdropB')];
-  let front = 0, shown = -1;
+/** The scene for a scroll position: shot a, optional shot b rising in, and the tide mix between them. */
+function sceneAt(y) {
+  const { i, p, t } = locate(y);
+  const S = SCENES[sections[i].id];
+  const N = sections[i + 1] && SCENES[sections[i + 1].id];
+  if (reduced) {
+    const k = N && t >= 0.5 ? i + 1 : i;
+    return { a: shot(SCENES[sections[k].id], 0.5), b: null, mix: 0 };
+  }
+  if (!N || t <= 0) return { a: shot(S, p), b: null, mix: 0 };
+  const from = shot(S, 1), to = shot(N, 0);
+  if (S.exit === 'continue' && N.clip === S.clip) {
+    return { a: { clip: S.clip, frame: lerp(from.frame, to.frame, t), zoom: lerp(from.zoom, to.zoom, t), focus: lerp2(from.focus, to.focus, t), dim: lerp(from.dim, to.dim, t) }, b: null, mix: 0 };
+  }
+  const e = ease(t);
+  const toward = SET === 'm' ? [0.5, (S.toward || S.focus)[1]] : (S.toward || S.focus);
   return {
-    start(onReady) { root.dataset.scene = 'fallback'; this.chapter(lastActive < 0 ? 0 : lastActive); onReady?.(); },
-    frame() {},
-    chapter(i) {
-      const key = SCENES[i].media;
-      if (key === shown) return;
-      shown = key; front ^= 1;
-      layers[front].style.backgroundImage = `url(${MEDIA[key]}.jpg)`;
-      layers[front].style.opacity = String(SCENES[i].dim < 0.7 ? 0.45 : 1);
-      layers[front].classList.add('on'); layers[front ^ 1].classList.remove('on');
-    },
-    stop() {},
+    a: { ...from, frame: from.frame + 4 * t, zoom: from.zoom * (1 + 0.35 * e), focus: lerp2(from.focus, toward, e) },
+    b: { ...to, zoom: to.zoom * (1 + 0.22 * (1 - e)) },
+    mix: clamp((t - 0.15) / 0.7),
   };
 }
 
+// ---------------------------------------------------------------- frames (progressive)
+const frames = {};
+let frameTotal = 0, frameLoaded = 0;
+/** Load every frame, coarse to fine (every 8th, then 4th, 2nd, all), so the whole voyage is scrubbable early. */
+async function loadFrames(clips, onProgress) {
+  for (const c of CLIP_ORDER) frames[c] = new Array(clips[c]);
+  const queue = [], seen = new Set();
+  const add = (c, i, pass) => { const k = `${c}:${i}`; if (!seen.has(k)) { seen.add(k); queue.push([c, i, pass]); } };
+  for (const step of [8, 4, 2, 1]) for (const c of CLIP_ORDER) {
+    for (let i = 0; i < clips[c]; i += step) add(c, i, step);
+    if (step === 8) add(c, clips[c] - 1, 8);
+  }
+  frameTotal = queue.length;
+  const skeleton = queue.filter((q) => q[2] === 8).length;
+  let next = 0;
+  const worker = async () => {
+    while (next < queue.length) {
+      const [c, i] = queue[next++];
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = `seq/${SET}/${c}/${String(i + 1).padStart(3, '0')}.webp`;
+      try { await img.decode(); frames[c][i] = img; } catch (error) { /* a missing frame is covered by its loaded neighbours */ }
+      frameLoaded++;
+      onProgress(frameLoaded, frameTotal, skeleton);
+    }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
+}
+/** Nearest loaded frames around position x of a clip, with the blend between them. */
+function sample(clip, x) {
+  const arr = frames[clip];
+  if (!arr) return null;
+  const n = arr.length;
+  x = clamp(x, 0, n - 1);
+  let lo = Math.floor(x), hi = Math.ceil(x);
+  while (lo >= 0 && !arr[lo]) lo--;
+  while (hi < n && !arr[hi]) hi++;
+  if (lo < 0 && hi >= n) return null;
+  if (lo < 0) return { i0: hi, i1: hi, f: 0 };
+  if (hi >= n) return { i0: lo, i1: lo, f: 0 };
+  return { i0: lo, i1: hi, f: hi === lo ? 0 : (x - lo) / (hi - lo) };
+}
+
+// ---------------------------------------------------------------- renderers (same interface: frame(scene, now, fx), stop())
 const VS = `#version 300 es
 const vec2 P[3] = vec2[3](vec2(-1.,-1.), vec2(3.,-1.), vec2(-1.,3.));
 out vec2 vUv;
@@ -92,42 +138,57 @@ void main(){ vec2 p = P[gl_VertexID]; vUv = vec2(p.x*.5+.5, .5-p.y*.5); gl_Posit
 const FS = `#version 300 es
 precision highp float;
 in vec2 vUv; out vec4 o;
-uniform sampler2D uA, uB;
-uniform vec4 uCropA, uCropB;
+uniform sampler2D uA0, uA1, uB0, uB1;
 uniform vec2 uFocusA, uFocusB, uPointer;
-uniform float uZoomA, uZoomB, uDimA, uDimB, uMix, uTime, uAspect, uGrain;
-vec2 cover(vec2 uv, vec4 c, vec2 f, float z){
-  float ra = (c.z*16.)/(c.w*9.);
-  vec2 s = uAspect < ra ? vec2(uAspect/ra, 1.) : vec2(1., ra/uAspect);
+uniform float uFA, uFB, uZoomA, uZoomB, uDimA, uDimB, uMix, uTime, uAspect, uTexAspect, uGrain, uBlur;
+vec2 cover(vec2 uv, vec2 f, float z){
+  vec2 s = uAspect < uTexAspect ? vec2(uAspect/uTexAspect, 1.) : vec2(1., uTexAspect/uAspect);
   s /= z;
   vec2 o0 = clamp(f - s*.5, vec2(0.), vec2(1.) - s);
-  return c.xy + (o0 + clamp(uv,0.,1.)*s)*c.zw;
+  return o0 + clamp(uv, 0., 1.)*s;
 }
+vec3 shotA(vec2 uv){ vec2 t = cover(uv, uFocusA, uZoomA); return mix(texture(uA0,t).rgb, texture(uA1,t).rgb, uFA)*uDimA; }
+vec3 shotB(vec2 uv){ vec2 t = cover(uv, uFocusB, uZoomB); return mix(texture(uB0,t).rgb, texture(uB1,t).rgb, uFB)*uDimB; }
 float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
-// Layered sines: a soft, irregular tide line at a fraction of value-noise cost.
 float swell(vec2 p){ return .5 + .22*sin(p.x*5.1 + p.y*1.7) + .16*sin(p.x*11.3 - p.y*3.1 + 1.7) + .08*sin(p.x*23.7 + p.y*7.9 + 4.1); }
+vec3 frameAt(vec2 uv, float m, float band){
+  if (m >= .999) return shotB(uv);
+  vec3 c = shotA(uv + vec2(0., band*.015));
+  if (m > .001) c = mix(c, shotB(uv - vec2(0., band*.012)), m);
+  return c;
+}
 void main(){
   vec2 uv = vUv + uPointer*.006;
-  // The current: B rises from the bottom like a tide, edged by a thin line of working light.
   float m = step(.999, uMix), band = 0.;
   if (uMix > .001 && uMix < .999) {
-    float edge = (1.-vUv.y)*.62 + swell(vUv + vec2(uTime*.03, 0.))*.38;
+    // The tide: the next shot rises from the bottom behind a thin line of working light.
+    float edge = (1.-vUv.y)*.62 + swell(vec2(vUv.x*uAspect, vUv.y) + vec2(uTime*.03, 0.))*.38;
     float t = uMix*1.25 - .12;
-    m = 1. - smoothstep(t-.035, t+.035, edge);
-    band = exp(-pow((edge-t)/.03, 2.));
+    m = 1. - smoothstep(t-.012, t+.012, edge);
+    band = exp(-pow((edge-t)/.012, 2.));
   }
-  vec3 a = texture(uA, cover(uv + vec2(0., band*.025), uCropA, uFocusA, uZoomA)).rgb*uDimA;
-  vec3 b = texture(uB, cover(uv - vec2(0., band*.02), uCropB, uFocusB, uZoomB)).rgb*uDimB;
-  vec3 col = mix(a, b, m) + vec3(.95,.45,.12)*band*.35;
+  vec3 col;
+  if (abs(uBlur) > .002) {
+    vec2 d = (uv - .5)*uBlur; col = vec3(0.);
+    for (int k = 0; k < 6; k++) col += frameAt(uv - d*float(k)/5., m, band);
+    col /= 6.;
+  } else col = frameAt(uv, m, band);
+  col += vec3(.95,.45,.12)*band*.6;
   float l = dot(col, vec3(.2126,.7152,.0722));
-  col = mix(col, col*vec3(.9,.97,1.1), .5*(1. - smoothstep(.35,.8,l))); // cool the shadows, keep the working lights warm
+  col = mix(col, col*vec3(.9,.97,1.1), .5*(1. - smoothstep(.35,.8,l))); // cool the shadows
+  // Split-tone: near-white highlights become sodium working light, so every clip carries the brand orange.
+  float sat = max(col.r, max(col.g, col.b)) - min(col.r, min(col.g, col.b));
+  col *= mix(vec3(1.), vec3(1.12,.8,.5), smoothstep(.42,.82,l)*(1. - smoothstep(.3,.6,sat)));
   col = mix(vec3(.043,.082,.188), col, smoothstep(-.05,.35,l)*.25 + .75);
   vec2 q = vUv - .5; col *= 1. - .72*dot(q,q);
   col += (hash(gl_FragCoord.xy + fract(uTime)*91.) - .5)*uGrain;
   o = vec4(col, 1.);
 }`;
 
+const TEX_ASPECT = SET === 'm' ? 405 / 720 : 1280 / 720;
+
 function webglRenderer() {
+  const canvas = $('#scene');
   const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance' });
   if (!gl) return null;
   const compile = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
@@ -138,124 +199,151 @@ function webglRenderer() {
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
   gl.useProgram(prog);
   const U = {};
-  for (const n of ['uA', 'uB', 'uCropA', 'uCropB', 'uFocusA', 'uFocusB', 'uPointer', 'uZoomA', 'uZoomB', 'uDimA', 'uDimB', 'uMix', 'uTime', 'uAspect', 'uGrain']) U[n] = gl.getUniformLocation(prog, n);
-  gl.uniform1i(U.uA, 0); gl.uniform1i(U.uB, 1);
+  for (const n of ['uA0', 'uA1', 'uB0', 'uB1', 'uFocusA', 'uFocusB', 'uPointer', 'uFA', 'uFB', 'uZoomA', 'uZoomB', 'uDimA', 'uDimB', 'uMix', 'uTime', 'uAspect', 'uTexAspect', 'uGrain', 'uBlur']) U[n] = gl.getUniformLocation(prog, n);
+  ['uA0', 'uA1', 'uB0', 'uB1'].forEach((n, k) => gl.uniform1i(U[n], k));
+  gl.uniform1f(U.uTexAspect, TEX_ASPECT);
+  // Software renderers (no GPU) get the low tier: no motion blur.
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const gpu = dbg ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)) : '';
+  const low = /swiftshader|llvmpipe|software/i.test(gpu);
 
-  const allowVideo = !reduced && !saveData;
-  const useMp4 = !!document.createElement('video').canPlayType('video/mp4; codecs="avc1.42E01E"');
-  const media = {};
-  for (const key of Object.keys(MEDIA)) {
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([11, 21, 48, 255]));
-    for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
-    media[key] = { tex, video: null, fresh: false, live: false };
-  }
-  const upload = (key, source) => { gl.bindTexture(gl.TEXTURE_2D, media[key].tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source); };
-  const loadPoster = (key) => new Promise((resolve) => {
-    const img = new Image(); img.decoding = 'async';
-    img.onload = () => { if (!media[key].live) upload(key, img); resolve(); };
-    img.onerror = () => resolve();
-    img.src = `${MEDIA[key]}.jpg`;
-  });
-  function video(key) {
-    const m = media[key];
-    if (m.video || !allowVideo) return m.video;
-    const v = document.createElement('video');
-    v.muted = true; v.loop = true; v.playsInline = true; v.preload = 'auto';
-    v.setAttribute('muted', ''); v.setAttribute('playsinline', '');
-    v.src = `${MEDIA[key]}.${useMp4 ? 'mp4' : 'webm'}`;
-    const mark = () => { m.fresh = true; m.live = true; if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(mark); };
-    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(mark); else v.addEventListener('timeupdate', () => { m.fresh = true; m.live = true; });
-    v.addEventListener('error', () => { m.video = null; });
-    m.video = v;
-    return v;
-  }
-  function wantPlaying(keys) {
-    for (const key of Object.keys(media)) {
-      const v = media[key].video;
-      if (keys.includes(key)) { const vv = video(key); if (vv && vv.paused) vv.play().catch(() => {}); }
-      else if (v && !v.paused) v.pause();
+  // Small LRU of frame textures so scrubbing back and forth re-uses uploads.
+  const cache = new Map();
+  let clock = 0;
+  function bind(unit, clip, i) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    const key = `${clip}:${i}`;
+    let entry = cache.get(key);
+    if (!entry) {
+      let tex;
+      if (cache.size >= 12) {
+        let oldKey = null, old = null;
+        for (const [k, v] of cache) if (!old || v.t < old.t) { oldKey = k; old = v; }
+        cache.delete(oldKey);
+        tex = old.tex;
+      } else {
+        tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
+      }
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frames[clip][i]);
+      entry = { tex, t: 0 };
+      cache.set(key, entry);
     }
+    entry.t = ++clock;
+    gl.bindTexture(gl.TEXTURE_2D, entry.tex);
   }
-
-  let pointer = [0, 0], target = [0, 0];
-  const onPointer = (e) => { target = [(e.clientX / innerWidth - 0.5), (e.clientY / innerHeight - 0.5)]; };
-  if (finePointer && !reduced) addEventListener('pointermove', onPointer, { passive: true });
-
   function resize() {
-    const dpr = Math.min(devicePixelRatio || 1, 1); // footage is 1280×720; more pixels add cost, not detail
-    canvas.width = Math.round(innerWidth * dpr); canvas.height = Math.round(innerHeight * dpr);
+    canvas.width = innerWidth; canvas.height = innerHeight; // footage is 720p: device pixels beyond 1× add cost, not detail
     gl.viewport(0, 0, canvas.width, canvas.height);
   }
   resize();
   addEventListener('resize', resize);
 
-  const ease = (x) => x * x * (3 - 2 * x);
-  const intro = { start: 0, len: reduced ? 0 : 6500 };
   return {
-    gl,
-    async start(onReady) {
-      await Promise.all(Object.keys(MEDIA).map((key, i, all) => loadPoster(key).then(() => onProgress?.(all.length))));
-      intro.start = performance.now();
-      onReady?.();
-    },
-    frame(pos, now) {
-      if (gl.isContextLost()) return;
-      const A = SCENES[pos.a], B = SCENES[pos.b];
-      const keys = pos.mix > 0 && A.media !== B.media ? [A.media, B.media] : [A.media];
-      wantPlaying(keys);
-      for (const key of keys) { const m = media[key]; if (m.fresh && m.video && m.video.readyState >= 2) { upload(key, m.video); m.fresh = false; } }
-      pointer[0] += (target[0] - pointer[0]) * 0.05; pointer[1] += (target[1] - pointer[1]) * 0.05;
-      const k = intro.len ? Math.min(1, (now - intro.start) / intro.len) : 1;
-      const lift = 1 + 0.22 * (1 - ease(k));
-      const zA = (A.zoom[0] + (A.zoom[1] - A.zoom[0]) * pos.p) * (pos.a === 0 ? lift : 1);
-      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, media[A.media].tex);
-      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, media[B.media].tex);
-      gl.uniform4fv(U.uCropA, A.crop); gl.uniform4fv(U.uCropB, B.crop);
-      gl.uniform2fv(U.uFocusA, A.focus); gl.uniform2fv(U.uFocusB, B.focus);
-      gl.uniform1f(U.uZoomA, zA); gl.uniform1f(U.uZoomB, B.zoom[0]);
-      gl.uniform1f(U.uDimA, A.dim); gl.uniform1f(U.uDimB, B.dim);
-      gl.uniform1f(U.uMix, reduced ? (pos.mix < 0.5 ? 0 : 1) : pos.mix);
+    canvas,
+    low,
+    frame(scene, now, fx) {
+      if (gl.isContextLost()) return false;
+      const a = scene.a && sample(scene.a.clip, scene.a.frame);
+      if (!a) { gl.clearColor(0.043, 0.082, 0.188, 1); gl.clear(gl.COLOR_BUFFER_BIT); return false; }
+      const b = scene.b && scene.mix > 0 && sample(scene.b.clip, scene.b.frame);
+      bind(0, scene.a.clip, a.i0); bind(1, scene.a.clip, a.i1);
+      if (b) { bind(2, scene.b.clip, b.i0); bind(3, scene.b.clip, b.i1); }
+      gl.uniform1f(U.uFA, a.f); gl.uniform1f(U.uFB, b ? b.f : 0);
+      gl.uniform2fv(U.uFocusA, scene.a.focus); gl.uniform1f(U.uZoomA, scene.a.zoom * fx.lift); gl.uniform1f(U.uDimA, scene.a.dim);
+      if (b) { gl.uniform2fv(U.uFocusB, scene.b.focus); gl.uniform1f(U.uZoomB, scene.b.zoom); gl.uniform1f(U.uDimB, scene.b.dim); }
+      gl.uniform1f(U.uMix, b ? scene.mix : 0);
       gl.uniform1f(U.uTime, reduced ? 0 : now / 1000);
       gl.uniform1f(U.uAspect, canvas.width / canvas.height);
-      gl.uniform1f(U.uGrain, 0.045);
-      gl.uniform2fv(U.uPointer, pointer);
+      gl.uniform1f(U.uGrain, 0.04);
+      gl.uniform1f(U.uBlur, low ? 0 : fx.blur);
+      gl.uniform2fv(U.uPointer, fx.pointer);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
+      return true;
     },
     stop() {
-      for (const m of Object.values(media)) { if (m.video) { m.video.pause(); m.video.removeAttribute('src'); m.video.load(); } gl.deleteTexture(m.tex); }
-      removeEventListener('resize', resize); removeEventListener('pointermove', onPointer);
+      removeEventListener('resize', resize);
+      for (const e of cache.values()) gl.deleteTexture(e.tex);
+      cache.clear();
     },
+  };
+}
+
+function canvasRenderer() {
+  const canvas = $('#scene2d');
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+  resize();
+  addEventListener('resize', resize);
+  function draw(s, alpha) {
+    const smp = sample(s.clip, s.frame);
+    if (!smp) return;
+    const img = frames[s.clip][smp.f < 0.5 ? smp.i0 : smp.i1];
+    const W = canvas.width, H = canvas.height, tw = img.naturalWidth, th = img.naturalHeight;
+    let vw = tw, vh = th;
+    if (W / H < tw / th) vw = th * (W / H); else vh = tw / (W / H);
+    vw /= s.zoom; vh /= s.zoom;
+    const sx = clamp(s.focus[0] * tw - vw / 2, 0, tw - vw), sy = clamp(s.focus[1] * th - vh / 2, 0, th - vh);
+    ctx.globalAlpha = alpha;
+    ctx.drawImage(img, sx, sy, vw, vh, 0, 0, W, H);
+    if (s.dim < 1) { ctx.globalAlpha = alpha * (1 - s.dim); ctx.fillStyle = '#0b1530'; ctx.fillRect(0, 0, W, H); }
+    ctx.globalAlpha = 1;
+  }
+  let lastKey = '';
+  const keyOf = (s) => { if (!s) return '-'; const m = sample(s.clip, s.frame); return m ? `${s.clip}:${m.f < 0.5 ? m.i0 : m.i1}:${s.zoom.toFixed(3)}:${s.dim.toFixed(2)}:${s.focus[0].toFixed(3)}` : `${s.clip}:none`; };
+  return {
+    canvas,
+    frame(scene) {
+      // Redraw only when the picture changes: a full-screen 2D draw every tick stalls slow devices.
+      const key = `${keyOf(scene.a)}|${scene.b && scene.mix > 0 ? keyOf(scene.b) : '-'}|${scene.mix.toFixed(2)}|${canvas.width}x${canvas.height}`;
+      if (key === lastKey) return true;
+      lastKey = key;
+      ctx.fillStyle = '#0b1530'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (!scene.a || !sample(scene.a.clip, scene.a.frame)) { lastKey = ''; return false; }
+      draw(scene.a, 1);
+      if (scene.b && scene.mix > 0) draw(scene.b, scene.mix);
+      return true;
+    },
+    stop() { removeEventListener('resize', resize); },
   };
 }
 
 // ---------------------------------------------------------------- intro
-let onProgress = null;
-function runIntro(enabled) {
-  if (!enabled) return () => {};
-  const label = $('#introLoad');
-  let loaded = 0;
-  onProgress = (total) => { loaded++; label.textContent = loaded < total ? `Preparing the voyage · ${loaded}/${total}` : 'Scroll to begin'; };
-  intro.hidden = false;
+function intro(enabled) {
+  const status = $('#introLoad');
+  if (!enabled) return { progress() {}, ready() {}, close() {} };
+  root.classList.add('intro-on');
+  introEl.hidden = false;
   let done = false, timer = 0;
-  // Skip is an explicit request: cut immediately. Timeout and scroll fade out.
-  const dismiss = (e) => {
-    if (done) return; done = true; clearTimeout(timer);
-    intro.classList.add('leaving');
-    if (e?.type === 'click') intro.hidden = true;
-    else setTimeout(() => { intro.hidden = true; }, 1100);
-    removeEventListener('wheel', dismiss); removeEventListener('touchmove', dismiss); removeEventListener('scroll', onScroll);
+  const close = (e) => {
+    if (done) return;
+    done = true; clearTimeout(timer);
+    root.classList.remove('intro-on');
+    introEl.classList.add('leaving');
+    if (e?.type === 'click') {
+      introEl.hidden = true;
+      const h = $('#h-prologue'); h.setAttribute('tabindex', '-1'); h.focus({ preventScroll: true });
+    } else setTimeout(() => { introEl.hidden = true; }, 1100);
+    removeEventListener('wheel', close); removeEventListener('touchmove', close); removeEventListener('keydown', onKey); removeEventListener('scroll', onScroll);
   };
-  const onScroll = () => { if (scrollY > 40) dismiss(); };
-  $('#skipIntro').addEventListener('click', dismiss);
-  addEventListener('wheel', dismiss, { passive: true, once: true });
-  addEventListener('touchmove', dismiss, { passive: true, once: true });
+  const onScroll = () => { if (scrollY > 40) close(); };
+  const onKey = (e) => { if (['ArrowDown', 'PageDown', ' ', 'End'].includes(e.key)) close(); };
+  $('#skipIntro').addEventListener('click', close);
+  addEventListener('wheel', close, { passive: true });
+  addEventListener('touchmove', close, { passive: true });
+  addEventListener('keydown', onKey);
   addEventListener('scroll', onScroll, { passive: true });
-  return () => { timer = setTimeout(dismiss, 6500); };
+  return {
+    progress(pct) { status.textContent = `Loading the voyage · ${pct}%`; },
+    ready() { status.textContent = 'Scroll to sail, or press Begin'; timer = setTimeout(close, 8000); },
+    close,
+  };
 }
 
-// ---------------------------------------------------------------- direct path
+// ---------------------------------------------------------------- direct path (companies menu)
 function directPath() {
   const toggle = $('#directToggle'), panel = $('#directPath');
   const set = (open) => {
@@ -269,52 +357,228 @@ function directPath() {
   addEventListener('click', (e) => { if (!panel.hidden && !e.target.closest('#directPath, #directToggle')) set(false); });
 }
 
+// ---------------------------------------------------------------- chrome: rail, beats
+let lastActive = -1;
+function updateChrome() {
+  const y = scrollY, h = innerHeight;
+  let active = 0;
+  for (let k = 0; k < sections.length; k++) if (tops[k] <= y + h * 0.5) active = k;
+  // Scroll-linked beats: --p is the hold progress of each story section near the viewport.
+  for (let k = Math.max(0, active - 1); k <= Math.min(sections.length - 1, active + 1); k++) {
+    if (!story.includes(sections[k])) continue;
+    const hold = Math.max(1, heights[k] - h);
+    sections[k].style.setProperty('--p', clamp((y - tops[k]) / hold).toFixed(3));
+  }
+  if (active !== lastActive) {
+    lastActive = active;
+    const id = sections[active].id;
+    for (const a of railLinks) {
+      if (a.getAttribute('href') === `#${id}`) { a.setAttribute('aria-current', 'step'); railNow.textContent = a.querySelector('span').textContent; }
+      else a.removeAttribute('aria-current');
+    }
+  }
+}
+function updateRoute(y) {
+  const h = innerHeight, n = sections.length;
+  let i = 0;
+  while (i < n - 1 && tops[i + 1] <= y + h * 0.5) i++;
+  const frac = clamp((y + h * 0.5 - tops[i]) / Math.max(1, heights[i]));
+  rail.style.setProperty('--route', clamp((i + frac) / (n - 1)).toFixed(4));
+}
+
+// ---------------------------------------------------------------- 3D components: opening globe, group container stack
+let three = null, threeMode = 'none', threeOpacity = -1, hot = -1, listHot = -1;
+const canvas3d = $('#scene3d');
+const leader = $('.leader'), leaderLine = leader.querySelector('line'), leaderDot = leader.querySelector('circle');
+const companyItems = [...document.querySelectorAll('#group .company-list li')];
+
+async function load3D(low) {
+  root.dataset.three = 'loading';
+  try {
+    const [mod, buf] = await Promise.all([import('./scene3d.js'), fetch('seq/land-dots.bin').then((r) => r.arrayBuffer()), document.fonts?.load('600 64px Archivo')]);
+    const names = companyItems.map((li) => li.querySelector('.co-name').textContent.trim());
+    three = mod.createScene3D(canvas3d, { landIndices: new Uint16Array(buf), names, reduced, lowTier: low });
+    three.setSize(innerWidth, innerHeight);
+    addEventListener('resize', () => three?.setSize(innerWidth, innerHeight));
+    threeOn = true;
+    root.dataset.three = 'ready';
+    redraw();
+  } catch (error) {
+    three = null; threeOn = false; root.dataset.three = 'off'; // 3D failed to load: the footage and the text carry the page
+  }
+}
+/** Which 3D component a scroll position shows, with its progress and opacity. */
+function threeState(y) {
+  const { i, p, t } = locate(y);
+  const id = sections[i].id;
+  const cut = (x) => (x >= 0.5 ? 1 : 0);
+  if (id === 'prologue') return { mode: 'globe', p: reduced ? 0.55 : p, opacity: reduced ? 1 : 1 - smooth(0.78, 0.92, p) };
+  if (id === 'road' && t > 0) return { mode: 'stack', p: 0, opacity: reduced ? cut(t) : smooth(0.3, 0.9, t) };
+  if (id === 'group') return { mode: 'stack', p: reduced ? 1 : p, opacity: t > 0 ? 1 - (reduced ? cut(t) : smooth(0.2, 0.8, t)) : 1 };
+  return { mode: 'none', p: 0, opacity: 0 };
+}
+function render3D(y, now) {
+  if (!three) return;
+  const s = threeState(y);
+  if (s.opacity <= 0.001) s.mode = 'none';
+  if (s.opacity !== threeOpacity) { canvas3d.style.opacity = s.opacity.toFixed(3); threeOpacity = s.opacity; }
+  if (s.mode === 'none' && threeMode === 'none') return;
+  threeMode = s.mode;
+  const h = s.mode === 'stack' ? (listHot >= 0 ? listHot : hot) : -1;
+  three.render({ mode: s.mode, p: s.p, now, pointer, hot: h });
+  if (s.mode === 'stack') {
+    companyItems.forEach((li, k) => {
+      const c = three.project(k);
+      li.dataset.cx = Math.round(c.x); li.dataset.cy = Math.round(c.y);
+      li.classList.toggle('is-hot', k === h);
+    });
+    if (h >= 0) {
+      const r = companyItems[h].getBoundingClientRect(), c = three.project(h);
+      leaderLine.setAttribute('x1', r.right + 10); leaderLine.setAttribute('y1', r.top + r.height / 2);
+      leaderLine.setAttribute('x2', c.x); leaderLine.setAttribute('y2', c.y);
+      leaderDot.setAttribute('cx', c.x); leaderDot.setAttribute('cy', c.y);
+    }
+    leader.classList.toggle('on', h >= 0 && s.opacity > 0.5);
+  } else {
+    leader.classList.remove('on');
+    hot = -1;
+  }
+}
+/** Hover a container or its name to light both; click a container to open its company's chapter. */
+function stackInteractions() {
+  addEventListener('pointermove', (e) => {
+    if (threeMode !== 'stack' || !three) return;
+    const k = e.target.closest('a, button, .company-list li') ? -1 : three.pick(e.clientX, e.clientY);
+    if (k !== hot) { hot = k; document.body.style.cursor = k >= 0 && companyItems[k].querySelector('a') ? 'pointer' : ''; redraw(); }
+  }, { passive: true });
+  addEventListener('click', (e) => {
+    if (threeMode !== 'stack' || !three || e.target.closest('a, button, input, summary')) return;
+    const k = three.pick(e.clientX, e.clientY);
+    companyItems[k]?.querySelector('a')?.click();
+  });
+  companyItems.forEach((li, k) => {
+    const on = () => { listHot = k; redraw(); }, off = () => { listHot = -1; redraw(); };
+    li.addEventListener('pointerenter', on); li.addEventListener('pointerleave', off);
+    li.addEventListener('focusin', on); li.addEventListener('focusout', off);
+  });
+}
+
 // ---------------------------------------------------------------- boot
 let renderer = null;
 let running = false;
+let ys = 0, yPrev = 0, lastNow = 0, introStart = 0;
+let pointer = [0, 0], target = [0, 0];
+let introCtl = null;
 
+function render(now) {
+  const dt = Math.min(0.1, Math.max(0.001, (now - (lastNow || now)) / 1000));
+  lastNow = now;
+  const goal = scrollY;
+  if (reduced || Math.abs(goal - ys) > innerHeight * 2.5) ys = goal; // long jumps (menu, rail) cut instead of fast-forwarding
+  else ys += (goal - ys) * (1 - Math.exp(-dt * 6));
+  const vel = (ys - yPrev) / dt;
+  yPrev = ys;
+  pointer[0] += (target[0] - pointer[0]) * 0.05; pointer[1] += (target[1] - pointer[1]) * 0.05;
+  const k = introStart ? clamp((now - introStart) / 5000) : 0;
+  const fx = {
+    lift: reduced ? 1 : 1 + 0.28 * (1 - ease(k)) * clamp(1 - ys / innerHeight),
+    blur: reduced ? 0 : clamp(vel / (innerHeight * 2.4), -1, 1) * 0.05,
+    pointer,
+  };
+  updateRoute(ys);
+  const drawn = renderer.frame(sceneAt(ys), now, fx);
+  render3D(ys, now);
+  return drawn;
+}
 function loop(now) {
   if (!running) return;
-  renderer.frame(position(), now);
-  if (!reduced) requestAnimationFrame(loop);
+  render(now);
+  requestAnimationFrame(loop);
 }
-function redraw() { if (running && reduced) requestAnimationFrame((t) => renderer.frame(position(), t)); }
+let pending = false;
+function redraw() {
+  if (!reduced || pending || !renderer) return;
+  pending = true;
+  requestAnimationFrame((t) => { pending = false; render(t); });
+}
+function start() {
+  if (running || !renderer) return;
+  if (reduced) { redraw(); return; }
+  running = true;
+  requestAnimationFrame(loop);
+}
 
 function toFallback() {
   running = false;
-  try { renderer?.stop?.(); } catch (error) { /* context already gone; nothing to release */ }
-  renderer = backdropRenderer();
-  lastActive = -1;
-  renderer.start();
-  updateChrome(position());
-  if (!intro.hidden) { intro.classList.add('leaving'); intro.hidden = true; }
+  try { renderer?.stop(); } catch (error) { /* the lost context has nothing left to release */ }
+  renderer = canvasRenderer();
+  root.dataset.scene = 'fallback';
+  try { three?.dispose(); } catch (error) { /* the 3D context may be lost too */ }
+  three = null; threeOn = false; root.dataset.three = 'off';
+  introCtl?.close();
+  if (!renderer) return;
+  start();
 }
 
-function boot() {
+/** Split each narration line into word spans (text stays readable as one sentence) for the scroll-linked reveal. */
+function splitNarration() {
+  if (reduced) return;
+  for (const el of document.querySelectorAll('.chapter .narration')) {
+    const words = el.textContent.trim().split(/\s+/);
+    el.textContent = '';
+    words.forEach((w, i) => {
+      const span = document.createElement('span');
+      span.className = 'w'; span.style.setProperty('--w', i); span.textContent = w;
+      el.append(span, i < words.length - 1 ? ' ' : '');
+    });
+  }
+}
+
+async function boot() {
+  splitNarration();
   measure();
+  ys = yPrev = scrollY;
   directPath();
-  addEventListener('resize', () => { measure(); updateChrome(position()); redraw(); });
-  addEventListener('scroll', () => { updateChrome(position()); redraw(); }, { passive: true });
+  updateChrome();
+  addEventListener('resize', () => { measure(); updateChrome(); redraw(); });
+  document.fonts?.ready.then(() => { measure(); updateChrome(); redraw(); });
+  addEventListener('load', () => { measure(); updateChrome(); redraw(); });
+  addEventListener('scroll', () => { updateChrome(); redraw(); }, { passive: true });
   document.addEventListener('visibilitychange', () => {
-    if (!renderer?.gl) return;
     if (document.hidden) running = false;
-    else if (!running && root.dataset.scene === 'ready') { running = true; requestAnimationFrame(loop); }
+    else start();
   });
+  if (finePointer && !reduced) addEventListener('pointermove', (e) => { target = [e.clientX / innerWidth - 0.5, e.clientY / innerHeight - 0.5]; }, { passive: true });
 
   let gl = null;
-  try { gl = webglRenderer(); } catch (error) { gl = null; /* WebGL unavailable: use the still-image backdrop */ }
-  if (!gl) { toFallback(); return; }
-  renderer = gl;
-  canvas.addEventListener('webglcontextlost', toFallback);
-  const armIntro = runIntro(!reduced);
-  updateChrome(position());
-  renderer.start(() => {
-    if (renderer !== gl) return;
-    root.dataset.scene = 'ready';
-    running = true;
-    requestAnimationFrame(loop);
-    // Start the intro clock only once frames are actually painting (first draw compiles the shader).
-    requestAnimationFrame(() => requestAnimationFrame(armIntro));
+  try { gl = webglRenderer(); } catch (error) { gl = null; /* WebGL unavailable: the 2D canvas renderer takes over */ }
+  if (gl) {
+    renderer = gl;
+    gl.canvas.addEventListener('webglcontextlost', toFallback);
+    introCtl = intro(!reduced);
+    stackInteractions();
+    load3D(gl.low);
+  } else {
+    toFallback();
+  }
+  if (!gl) root.dataset.three = 'off';
+
+  let manifest = null;
+  try { manifest = await (await fetch('seq/manifest.json')).json(); } catch (error) { manifest = null; /* no footage: the page stays a readable document */ }
+  if (!manifest) { root.dataset.frames = 'missing'; return; }
+  root.dataset.frames = 'loading';
+  let shown = false;
+  loadFrames(manifest.clips, (loaded, total, skeleton) => {
+    if (loaded < skeleton) introCtl?.progress(Math.round((loaded / skeleton) * 100));
+    if (loaded === skeleton) {
+      root.dataset.frames = 'skeleton';
+      if (renderer === gl && root.dataset.scene !== 'fallback') root.dataset.scene = 'ready';
+      introStart = performance.now();
+      introCtl?.ready();
+    }
+    if (loaded === total) root.dataset.frames = 'all';
+    if (!shown) { shown = true; start(); }
+    redraw();
   });
 }
 

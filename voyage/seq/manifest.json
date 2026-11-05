@@ -1,0 +1,6 @@
+{
+  "fps": {"sea": 10, "journey": 15, "river": 10},
+  "sets": {"d": [1280, 720], "m": [405, 720]},
+  "clips": {"sea": 60, "journey": 150, "river": 80},
+  "source": "sea and river: Google Flow clips; journey: owner-supplied Gemini (Veo) clip, truck emblem blurred in frames 60-118; all generated for this concept, 5 Nov 2026. m = 9:16 crop following the subject."
+}

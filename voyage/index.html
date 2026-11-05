@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-scene="static" data-motion="full">
+<html lang="en" data-scene="static" data-motion="full" data-frames="none">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
@@ -8,49 +8,53 @@
 <meta name="description" content="Concept preview: one voyage through Mutual Group's shipping agency, berth, customs, river and road companies in Chittagong.">
 <meta name="theme-color" content="#0b1530">
 <link rel="icon" href="data:,">
-<link rel="preload" href="vendor/fonts/manrope-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="media/sea.jpg" as="image">
+<link rel="preload" href="vendor/fonts/archivo-latin-wdth-normal.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="vendor/fonts/source-serif-4-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 <noscript><style>#directToggle{display:none}</style></noscript>
 </head>
 <body>
 <div class="intro" id="intro" hidden>
-  <p class="intro-count" aria-live="polite"><span id="introLoad">Preparing the voyage</span></p>
   <div class="intro-body">
     <p class="intro-kicker">Mutual Group · Chittagong</p>
-    <p class="intro-title">From the anchorage<br>to the factory gate.</p>
-    <p class="intro-whisper">Before the world moves, water remembers.</p>
+    <p class="intro-title">From the anchorage to the factory gate.</p>
   </div>
-  <button class="intro-skip" id="skipIntro" type="button">Skip intro</button>
+  <div class="intro-foot">
+    <button class="intro-begin" id="skipIntro" type="button">Begin the voyage</button>
+    <p class="intro-status" id="introLoad" aria-live="polite">Loading the voyage</p>
+  </div>
 </div>
 
 <a class="skip-link" href="#prologue">Skip to content</a>
 
 <canvas id="scene" aria-hidden="true"></canvas>
-<div class="backdrop" aria-hidden="true"><div class="backdrop-layer" id="backdropA"></div><div class="backdrop-layer" id="backdropB"></div></div>
+<canvas id="scene2d" aria-hidden="true"></canvas>
+<canvas id="scene3d" aria-hidden="true"></canvas>
 <div class="shade" aria-hidden="true"></div>
+<svg class="leader" aria-hidden="true"><line x1="0" y1="0" x2="0" y2="0"/><circle r="4" cx="0" cy="0"/></svg>
 
 <header class="top">
-  <a class="mark" href="#prologue">Mutual<span>Group</span></a>
+  <a class="mark" href="#prologue">Mutual Group</a>
   <div class="top-actions">
-    <button class="direct-toggle" id="directToggle" type="button" aria-expanded="false" aria-controls="directPath">All companies</button>
+    <button class="direct-toggle" id="directToggle" type="button" aria-expanded="false" aria-controls="directPath">Companies</button>
     <a class="top-contact" href="#contact">Contact</a>
   </div>
   <nav class="direct" id="directPath" aria-label="All companies" hidden>
     <ul>
       <li><a href="#arrival"><span>Mutual Shipping Ltd.</span><small>International shipping agent</small></a></li>
-      <li><a href="#berth"><span>Pancharagh Udayon Shangstha Ltd.</span><small>Stevedore and berth operator</small></a></li>
+      <li><a href="#berth"><span>Pancharagh Udayon Shangstha Ltd.</span><small>Stevedore and berth operator, Berth No. 8</small></a></li>
       <li><a href="#clearance"><span>Mutual Trading Ltd.</span><small>Customs clearing and forwarding</small></a></li>
       <li><a href="#river"><span>Central Navigation Ltd.</span><small>Inland coastal vessel owners</small></a></li>
       <li><a href="#road"><span>Modern Logistics</span><small>Heavy equipment and container carrier</small></a></li>
-      <li><a href="#beyond"><span>M Tech</span><small>Engineering, consultancy and suppliers</small></a></li>
-      <li><a href="#beyond"><span>Sun Valley Developments Ltd.</span><small>Land developer and real estate</small></a></li>
-      <li><a href="#companies"><span>ARK</span><small>The group's social work</small></a></li>
+      <li><a href="#co-mtech"><span>M Tech</span><small>Engineering, consultancy and suppliers</small></a></li>
+      <li><a href="#co-sunvalley"><span>Sun Valley Developments Ltd.</span><small>Land developer and real estate</small></a></li>
+      <li><a href="#co-ark"><span>ARK</span><small>The group's social work</small></a></li>
     </ul>
   </nav>
 </header>
 
 <nav class="rail" aria-label="Voyage">
+  <p class="rail-now" aria-hidden="true">Since 1962</p>
   <ol>
     <li><a href="#prologue"><b>01</b><span>Since 1962</span></a></li>
     <li><a href="#arrival"><b>02</b><span>Arrival</span></a></li>
@@ -58,111 +62,119 @@
     <li><a href="#clearance"><b>04</b><span>Clearance</span></a></li>
     <li><a href="#river"><b>05</b><span>River</span></a></li>
     <li><a href="#road"><b>06</b><span>Road</span></a></li>
-    <li><a href="#beyond"><b>07</b><span>Beyond</span></a></li>
+    <li><a href="#group"><b aria-hidden="true">·</b><span>The group</span></a></li>
+    <li><a href="#contact"><b aria-hidden="true">·</b><span>Contact</span></a></li>
   </ol>
+  <span class="rail-track" aria-hidden="true"><span class="rail-fill"></span></span>
 </nav>
 
 <main id="voyage">
-  <section class="chapter" id="prologue" data-scene="0" aria-labelledby="h-prologue">
+  <section class="chapter" id="prologue" style="--len:220vh" aria-labelledby="h-prologue">
     <div class="chapter-inner">
-      <p class="label"><b>01</b> Since 1962</p>
-      <p class="whisper">Across quiet waters, global trade moves in stillness.</p>
-      <h2 id="h-prologue">A family business on the port city's waterfront.</h2>
-      <p class="body">Al-Hajj Swaleh Ahmed founded Sasco Overseas as a trading company in 1962. After 1998 his sons, Rais Ahmed and Parvez Ahmed, founded Mutual Group in Chittagong, which has handled customs clearance and shipping since 1992.</p>
-      <figure class="figure"><div class="figure-value">1962</div><figcaption>Sasco Overseas founded as a trading company <span class="figure-source">Group profile, p.2 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">Across quiet waters, global trade moves in stillness.</p>
+      <div class="claim">
+        <h2 id="h-prologue">Mutual Group</h2>
+        <p class="role">A Chittagong family business since 1962</p>
+        <p class="fact">Al-Hajj Swaleh Ahmed founded <strong>Sasco Overseas in 1962</strong>. Customs clearance and shipping followed in 1992, and since 1998 his sons, Rais Ahmed and Parvez Ahmed, have led the group.</p>
+        <p class="source">Group profile, p.2 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="arrival" data-scene="1" aria-labelledby="h-arrival">
+  <section class="chapter" id="arrival" style="--len:230vh" aria-labelledby="h-arrival">
     <div class="chapter-inner">
-      <p class="label"><b>02</b> Arrival · Mutual Shipping Ltd.</p>
-      <p class="whisper">Night meets the horizon. Every glowing light marks a promise in transit.</p>
-      <h2 id="h-arrival">The agent meets the ship.</h2>
-      <p class="body">An international shipping agent for bulk, general, project and specialised cargo, working inside the customs-restricted area of Chittagong Port.</p>
-      <figure class="figure"><div class="figure-value small">SMW-4</div><figcaption>Project cargo cleared for the submarine cable system <span class="figure-source">Group profile, p.5 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">Night meets the horizon. Every glowing light is cargo approaching the gateway.</p>
+      <div class="claim">
+        <h2 id="h-arrival">Mutual Shipping Ltd.</h2>
+        <p class="role">International shipping agent</p>
+        <p class="fact">Meets bulk, general, project and specialised cargo inside the customs-restricted area of Chittagong Port, including <strong>project cargo for the SMW-4 submarine cable</strong> for BTTB.</p>
+        <p class="source">Group profile, p.5 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="berth" data-scene="2" aria-labelledby="h-berth">
+  <section class="chapter" id="berth" style="--len:320vh" aria-labelledby="h-berth">
     <div class="chapter-inner">
-      <p class="label"><b>03</b> Berth · Pancharagh Udayon Shangstha Ltd.</p>
-      <p class="whisper">Where land meets tide, heavy cargo rests under watchful floodlights.</p>
-      <h2 id="h-berth">Alongside at Berth No. 8.</h2>
-      <p class="body">Stevedore and berth operator at Berth No. 8, Chittagong Port Authority, since 2003: bulk, general and project cargo, and machinery.</p>
-      <figure class="figure"><div class="figure-value">4.49<span>million tonnes</span></div><figcaption>Handled since 2003 <span class="figure-source">Group profile, p.9 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">Where land meets tide, heavy cargo rests under watchful floodlights.</p>
+      <div class="claim">
+        <h2 id="h-berth">Pancharagh Udayon Shangstha Ltd.</h2>
+        <p class="role">Stevedore and berth operator, Berth No. 8, Chittagong Port Authority</p>
+        <p class="fact">Since 2003, <strong>4.49 million tonnes</strong> of bulk, general and project cargo and machinery handled across the quay.</p>
+        <p class="source">Group profile, p.9 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="clearance" data-scene="3" aria-labelledby="h-clearance">
+  <section class="chapter" id="clearance" style="--len:220vh" aria-labelledby="h-clearance">
     <div class="chapter-inner">
-      <p class="label"><b>04</b> Clearance · Mutual Trading Ltd.</p>
-      <p class="whisper">Through quiet corridors of steel, trade finds its path.</p>
-      <h2 id="h-clearance">Cleared and released.</h2>
-      <p class="body">Customs clearing and forwarding since 1992: food grain in bulk, steel, logs, and containerised cargo for ceramics, raw materials, garments and textiles.</p>
-      <figure class="figure"><div class="figure-value">3.67<span>million tonnes</span></div><figcaption>Cleared over ten years <span class="figure-source">Group profile, p.7 · Jan 2019 · to be confirmed</span></figcaption></figure>
-      <figure class="figure"><div class="figure-value">2,800–3,000<span>TEU a year</span></div><figcaption>Of food grain, plus 2,050–2,100 TEU for garments and textiles <span class="figure-source">Group profile, p.7 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">Through quiet corridors of steel, trade finds its path.</p>
+      <div class="claim">
+        <h2 id="h-clearance">Mutual Trading Ltd.</h2>
+        <p class="role">Customs clearing and forwarding agent since 1992</p>
+        <p class="fact"><strong>3.67 million tonnes</strong> cleared over ten years, from wheat, rice and sugar to steel coil, billets and logs.</p>
+        <p class="source">Group profile, p.7 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="river" data-scene="4" aria-labelledby="h-river">
+  <section class="chapter" id="river" style="--len:260vh" aria-labelledby="h-river">
     <div class="chapter-inner">
-      <p class="label"><b>05</b> River · Central Navigation Ltd.</p>
-      <p class="whisper">Upward along calm, misted waters, the river carries trade inland.</p>
-      <h2 id="h-river">By river to the inland jetties.</h2>
-      <p class="body">Owner and operator of inland coastal vessels, lightering cargo to shallow-draft river jetties across the country.</p>
-      <figure class="figure"><div class="figure-value">14<span>vessels</span></div><figcaption>From 1,250 to 2,800 tonnes each <span class="figure-source">Group profile, p.8 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">Upward along calm, misted water, the river carries trade inland.</p>
+      <div class="claim">
+        <h2 id="h-river">Central Navigation Ltd.</h2>
+        <p class="role">Inland coastal vessel owners</p>
+        <p class="fact"><strong>Fourteen vessels</strong> of 1,250 to 2,800 tonnes lighter cargo from ships to shallow-draft river jetties across the country.</p>
+        <p class="source">Group profile, p.8 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="road" data-scene="5" aria-labelledby="h-road">
+  <section class="chapter" id="road" style="--len:260vh" aria-labelledby="h-road">
     <div class="chapter-inner">
-      <p class="label"><b>06</b> Road · Modern Logistics</p>
-      <p class="whisper">From harbour lights to the open highway.</p>
-      <h2 id="h-road">The last miles to the factory.</h2>
-      <p class="body">Heavy equipment and container transport, and inland coastal vessel supply, arranged for importers and exporters.</p>
-      <figure class="figure"><div class="figure-value">2006</div><figcaption>Moving cargo for importers and exporters since <span class="figure-source">Group profile, p.6 · Jan 2019 · to be confirmed</span></figcaption></figure>
+      <p class="narration">From harbour lights to the open highway.</p>
+      <div class="claim">
+        <h2 id="h-road">Modern Logistics</h2>
+        <p class="role">Heavy equipment and container carrier</p>
+        <p class="fact">Since <strong>2006</strong>, heavy equipment and containers carried for importers and exporters, with inland coastal vessels supplied on demand.</p>
+        <p class="source">Group profile, p.6 · January 2019 · to be confirmed</p>
+      </div>
     </div>
   </section>
 
-  <section class="chapter" id="beyond" data-scene="6" aria-labelledby="h-beyond">
+  <section class="chapter chapter-group" id="group" style="--len:260vh" aria-labelledby="h-group">
     <div class="chapter-inner">
-      <p class="label"><b>07</b> Beyond the port · M Tech · Sun Valley Developments Ltd.</p>
-      <p class="whisper">Where trade builds cities. This is the pulse of Chittagong.</p>
-      <h2 id="h-beyond">What the cargo builds.</h2>
-      <p class="body">M Tech supplies engineering and safety systems: CCTV and access control, electrical, fire safety, automation, petrochemical solutions and thermographic testing. Sun Valley Developments is the group's land and real estate company.</p>
-    </div>
-  </section>
-
-  <section class="chapter chapter-plain" id="companies" data-scene="7" aria-labelledby="h-companies">
-    <div class="chapter-inner">
-      <p class="label">The group</p>
-      <h2 id="h-companies">One group across the chain.</h2>
+      <h2 id="h-group">One group, from the anchorage to the factory gate.</h2>
       <ul class="company-list">
-        <li><a href="#arrival">Mutual Shipping Ltd.</a><span>International shipping agent</span></li>
-        <li><a href="#berth">Pancharagh Udayon Shangstha Ltd.</a><span>Stevedore and berth operator, Berth No. 8</span></li>
-        <li><a href="#clearance">Mutual Trading Ltd.</a><span>Customs clearing and forwarding agent</span></li>
-        <li><a href="#river">Central Navigation Ltd.</a><span>Inland coastal vessel owners</span></li>
-        <li><a href="#road">Modern Logistics</a><span>Heavy equipment and container carrier</span></li>
-        <li><a href="#beyond">M Tech</a><span>Engineering, consultancy and suppliers</span></li>
-        <li><a href="#beyond">Sun Valley Developments Ltd.</a><span>Land developer and real estate</span></li>
-        <li><span class="co-name">ARK</span><span>The group's social work: Chittagong's first drug-addiction treatment centre, registered 2002</span></li>
+        <li id="co-shipping"><a href="#arrival"><span class="co-name">Mutual Shipping Ltd.</span><span class="co-role">International shipping agent</span></a></li>
+        <li id="co-pus"><a href="#berth"><span class="co-name">Pancharagh Udayon Shangstha Ltd.</span><span class="co-role">Stevedore and berth operator, Berth No. 8</span></a></li>
+        <li id="co-trading"><a href="#clearance"><span class="co-name">Mutual Trading Ltd.</span><span class="co-role">Customs clearing and forwarding agent</span></a></li>
+        <li id="co-navigation"><a href="#river"><span class="co-name">Central Navigation Ltd.</span><span class="co-role">Inland coastal vessel owners</span></a></li>
+        <li id="co-logistics"><a href="#road"><span class="co-name">Modern Logistics</span><span class="co-role">Heavy equipment and container carrier</span></a></li>
+        <li id="co-mtech"><div class="co-static"><span class="co-name">M Tech</span><span class="co-role">Engineering, consultancy and suppliers: CCTV and access control, electrical, fire safety, automation, petrochemical solutions and thermographic testing</span></div></li>
+        <li id="co-sunvalley"><div class="co-static"><span class="co-name">Sun Valley Developments Ltd.</span><span class="co-role">Land developer and real estate</span></div></li>
+        <li id="co-ark"><div class="co-static"><span class="co-name">ARK</span><span class="co-role">The group's social work: Chittagong's first drug-addiction treatment centre, registered in 2002</span></div></li>
       </ul>
+      <p class="source">Group profile, pp.2–12 · January 2019 · to be confirmed</p>
     </div>
   </section>
 
-  <section class="chapter chapter-plain" id="contact" data-scene="8" aria-labelledby="h-contact">
+  <section class="chapter chapter-plain" id="contact" aria-labelledby="h-contact">
     <div class="chapter-inner">
-      <p class="label">Contact</p>
       <h2 id="h-contact">Talk to the desk that handles your cargo.</h2>
-      <address class="body">Corporate office<br>Shahjadi Chamber (2nd floor), 1331/B, Sheikh Mujib Road<br>Agrabad, Chittagong-4100, Bangladesh</address>
-      <p class="body muted">Phone numbers and an enquiry email will be added once Mutual Group confirms them.</p>
+      <address class="address">Corporate office<br>Shahjadi Chamber (2nd floor), 1331/B, Sheikh Mujib Road<br>Agrabad, Chittagong-4100, Bangladesh</address>
+      <ul class="phones">
+        <li><a href="tel:+88031712148">+88 031 712148</a></li>
+        <li><a href="tel:+880312525887">+88 031 2525887</a></li>
+        <li><a href="tel:+88031724401">+88 031 724401</a></li>
+      </ul>
+      <p class="source">Group profile, p.13 · January 2019 · numbers to be confirmed by Mutual Group</p>
     </div>
   </section>
 </main>
 
 <footer class="foot">
-  <p class="disclaimer">Concept preview · figures from the group's historical profile</p>
-  <p class="foot-note">Footage generated for this concept; not Mutual Group's facilities.</p>
+  <p>Concept preview · figures from the group's historical profile</p>
+  <p>Footage generated for this concept; it does not show Mutual Group's facilities.</p>
 </footer>
 
 <script type="module" src="voyage.js"></script>
