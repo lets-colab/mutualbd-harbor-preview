@@ -2,10 +2,14 @@
 // Raw WebGL 1 with procedural geometry: no dependencies, assets or network requests.
 // The DOM panel carries every word; the canvas is decorative and can fail without losing content.
 
-const FOG = [0.059, 0.231, 0.282];
-const LIGHT = normalize([-0.45, 0.78, 0.42]);
+// Blue-hour lighting: a sun just below the horizon, cool ambient sky, warm sodium terminal lights.
+const FOG = [0.25, 0.33, 0.41];
+const LIGHT = normalize([-0.62, 0.32, 0.5]);
+const SODIUM = [1, 0.62, 0.25];
+const WHITE_LIGHT = [1, 0.86, 0.62];
+const WARNING = [1, 0.22, 0.16];
 const COLOR = {
-  land: '#34555a', apron: '#2b464b', road: '#1d3238', edge: '#d4d6b7', hull: '#182e3b', deck: '#496672',
+  land: '#2f474d', apron: '#26393f', road: '#1a2a30', pole: '#1c2a30', edge: '#d4d6b7', hull: '#182e3b', deck: '#496672',
   cream: '#e3e2d0', boom: '#d4d6b7', glass: '#244956', funnel: '#baccc1', shed: '#7e9da0', roof: '#b0b5aa',
   booth: '#426b70', lime: '#d7f46c',
 };
@@ -13,11 +17,25 @@ const CONTAINERS = ['#d8a877', '#426b70', '#b0b5aa', '#c17851', '#7e9da0'];
 const SHIP_PATH = [[-72, 36], [-22, 30], [-4, -1.9], [18, -1.9]];
 const SHIP_PROGRESS = [0.42, 1, 1, 1];
 const CAMERAS = [
-  { eye: [-50, 16, 54], target: [-14, 1, 8] },
+  { eye: [-52, 12, 56], target: [-12, 3, 6] },
   { eye: [-6, 11, 28], target: [20, 3.5, -5] },
-  { eye: [24, 11, 14], target: [42, 1.5, -9] },
+  { eye: [34, 9, 13], target: [44, 1.5, -9] },
   { eye: [40, 6.5, 6], target: [72, 1, -8] },
 ];
+// Light placement: yard poles stand in the container aisles, quay poles on the berth edge, road poles on the embankment.
+const YARD_LIGHTS = [9, 15, 21, 27, 33].flatMap((x) => [[x, -23.4], [x, -18]]);
+const QUAY_LIGHT_X = [4, 8, 12, 16, 20, 24, 28, 32, 36];
+const ROAD_LIGHT_X = Array.from({ length: 14 }, (_, i) => 44 + i * 12);
+// Generic anchored vessels: one cluster west of the terminal, one along the onward road. Fixed seed keeps renders identical.
+const ANCHORAGE = (() => {
+  const random = seeded(11);
+  const out = [];
+  for (let i = 0; i < 14; i++) out.push([-40 + random() * 36, -40 + random() * 28]);
+  for (let i = 0; i < 12; i++) out.push([72 + random() * 70, 6 + random() * 34]);
+  return out;
+})();
+// Opening shot: almost straight down over the arriving vessel, then settling into Arrival.
+const INTRO_CAMERA = { eye: [-23, 75, 25], target: [-23, 0, 19] };
 const NOTICE = "The 3D view isn't available right now. The stops below still work, or exit to the page.";
 
 export function open({ stops, returnFocus }) {
@@ -157,6 +175,8 @@ function createScene(canvas, reduced, onLost) {
       solid: program(gl, SOLID_VS, SOLID_FS),
       water: program(gl, WATER_VS, WATER_FS),
       signal: program(gl, SIGNAL_VS, SIGNAL_FS),
+      sky: program(gl, SKY_VS, SKY_FS),
+      glow: program(gl, GLOW_VS, GLOW_FS),
     };
   } catch (error) {
     return null; // Shader failure leaves the text panel as the experience.
@@ -169,10 +189,14 @@ function createScene(canvas, reduced, onLost) {
     beacon: uploadSolid(gl, buildBeacon()),
     water: uploadWater(gl),
     signal: uploadSignal(gl),
+    sky: upload(gl, [-1, -1, 3, -1, -1, 3]),
+    worldLights: upload(gl, buildWorldLights(), 10),
+    shipLights: upload(gl, buildShipLights(), 10),
   };
 
   const camera = { from: CAMERAS[0], to: CAMERAS[0], progressFrom: SHIP_PROGRESS[0], progressTo: SHIP_PROGRESS[0], start: 0, duration: 1 };
   let stopIndex = 0;
+  let introPending = !reduced;
   let truckClock = 0;
   let pointer = [0, 0];
   let pointerSmooth = [0, 0];
@@ -227,6 +251,7 @@ function createScene(canvas, reduced, onLost) {
     use(w);
     gl.uniformMatrix4fv(w.u.uViewProj, false, viewProj);
     gl.uniform1f(w.u.uTime, time);
+    gl.uniform1f(w.u.uRipple, time % 1000);
     shared(w, eye);
     gl.bindBuffer(gl.ARRAY_BUFFER, meshes.water.buf);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshes.water.index);
@@ -253,11 +278,48 @@ function createScene(canvas, reduced, onLost) {
     solid(s, meshes.ship, ship, 0);
     solid(s, meshes.truck, truck, 0);
     solid(s, meshes.beacon, beacon, 1);
+
+    // Sky last, at the far plane, so it shades only pixels no geometry covered.
+    const sky = programs.sky;
+    use(sky);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(false);
+    gl.uniform1f(sky.u.uPitch, Math.atan2(target[1] - eye[1], Math.hypot(target[0] - eye[0], target[2] - eye[2])));
+    gl.uniform1f(sky.u.uTanHalfFov, Math.tan(fov / 2));
+    gl.bindBuffer(gl.ARRAY_BUFFER, meshes.sky.buf);
+    attrib(sky, 'aPos', 2, 2, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.depthFunc(gl.LESS);
+
+    // Lights are additive glow: occluded by geometry, never occluding it.
+    const glow = programs.glow;
+    use(glow);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.depthMask(false);
+    gl.uniformMatrix4fv(glow.u.uViewProj, false, viewProj);
+    gl.uniform3fv(glow.u.uCam, eye);
+    gl.uniform1f(glow.u.uTime, time);
+    lights(glow, meshes.worldLights, IDENTITY);
+    lights(glow, meshes.shipLights, ship);
+    gl.depthMask(true);
+    gl.disable(gl.BLEND);
+  }
+
+  function lights(p, mesh, matrix) {
+    gl.uniformMatrix4fv(p.u.uModel, false, matrix);
+    gl.bindBuffer(gl.ARRAY_BUFFER, mesh.buf);
+    attrib(p, 'aCenter', 3, 10, 0);
+    attrib(p, 'aCorner', 2, 10, 3);
+    attrib(p, 'aKind', 1, 10, 5);
+    attrib(p, 'aColor', 3, 10, 6);
+    attrib(p, 'aSize', 1, 10, 9);
+    gl.drawArrays(gl.TRIANGLES, 0, mesh.count);
   }
 
   // Arrays left enabled by the previous program would point at the wrong buffers.
   function use(p) {
-    for (let i = 0; i < 4; i++) gl.disableVertexAttribArray(i);
+    for (let i = 0; i < 8; i++) gl.disableVertexAttribArray(i);
     gl.useProgram(p.id);
   }
 
@@ -307,12 +369,13 @@ function createScene(canvas, reduced, onLost) {
         target: lerp3(camera.from.target, camera.to.target, k),
       };
       const progressHere = camera.progressFrom + (camera.progressTo - camera.progressFrom) * k;
-      camera.from = here;
+      camera.from = introPending ? INTRO_CAMERA : here;
       camera.to = CAMERAS[index];
       camera.progressFrom = progressHere;
       camera.progressTo = SHIP_PROGRESS[index];
       camera.start = now;
-      camera.duration = 1600 + 900 * Math.abs(camera.progressTo - progressHere);
+      camera.duration = introPending ? 3600 : 1600 + 900 * Math.abs(camera.progressTo - progressHere);
+      introPending = false;
       if (index === 3 && stopIndex !== 3) truckClock = now / 1000;
       stopIndex = index;
       request();
@@ -401,6 +464,13 @@ function buildWorld() {
   b.box(38.8, 3.6, -10, 41, 4, -5, COLOR.cream);
   b.box(40.6, 0.8, -10.6, 41.6, 2.6, -9.8, COLOR.booth);
   b.box(39.7, 1.6, -9.2, 39.9, 1.75, -6.6, COLOR.lime);
+  for (const [x, z] of YARD_LIGHTS) b.box(x - 0.12, 0.8, z - 0.12, x + 0.12, 9, z + 0.12, COLOR.pole);
+  for (const x of QUAY_LIGHT_X) b.box(x - 0.1, 0.8, -4.7, x + 0.1, 7, -4.5, COLOR.pole);
+  for (const x of ROAD_LIGHT_X) b.box(x - 0.1, 0.8, -9.4, x + 0.1, 6, -9.2, COLOR.pole);
+  for (const [x, z] of ANCHORAGE) {
+    b.box(x - 2.2, -0.4, z - 0.6, x + 2.2, 0.9, z + 0.6, COLOR.hull);
+    b.box(x - 2, 0.9, z - 0.5, x - 1, 1.6, z + 0.5, COLOR.cream);
+  }
   return b.data;
 }
 
@@ -445,6 +515,63 @@ function buildBeacon() {
     b.tri(bottom, ring[i], ring[(i + 1) % 4], c, [0, 0, 0]);
   }
   return b.data;
+}
+
+// Each light is one or more quads: a camera-facing glow, a flat pool on the ground, or a reflection streak on the water.
+const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, -1], [1, 1], [-1, 1]];
+const SPRITE = 0;
+const POOL = 1;
+const STREAK = 2;
+
+function glowQuad(out, [x, y, z], kind, color, size) {
+  for (const [cx, cz] of CORNERS) out.push(x, y, z, cx, cz, kind, color[0], color[1], color[2], size);
+}
+function dim(color, k) { return color.map((v) => v * k); }
+
+function buildWorldLights() {
+  const out = [];
+  for (const [x, z] of YARD_LIGHTS) {
+    glowQuad(out, [x, 9.2, z], SPRITE, SODIUM, 1.4);
+    glowQuad(out, [x, 0.86, z], POOL, dim(SODIUM, 0.6), 6);
+  }
+  for (const x of QUAY_LIGHT_X) {
+    glowQuad(out, [x, 7.2, -4.6], SPRITE, SODIUM, 1.3);
+    glowQuad(out, [x, 0.86, -6.6], POOL, dim(SODIUM, 0.5), 4.5);
+    glowQuad(out, [x, 0, -3.6], STREAK, dim(SODIUM, 0.8), 1.2);
+  }
+  for (const x of ROAD_LIGHT_X) {
+    glowQuad(out, [x, 6.2, -9.3], SPRITE, SODIUM, 1.2);
+    glowQuad(out, [x, 0.87, -8], POOL, dim(SODIUM, 0.45), 3.5);
+    glowQuad(out, [x, 0, x > 66 ? -4.8 : -3.6], STREAK, dim(SODIUM, 0.6), 1);
+  }
+  for (const z of [-9.2, -5.8]) glowQuad(out, [39.8, 3.9, z], SPRITE, WHITE_LIGHT, 1);
+  glowQuad(out, [40, 0.87, -7.5], POOL, dim(WHITE_LIGHT, 0.5), 4);
+  for (const x of [38, 42, 46]) {
+    glowQuad(out, [x, 3.7, -14.6], SPRITE, SODIUM, 1);
+    glowQuad(out, [x, 0.86, -13], POOL, dim(SODIUM, 0.4), 3);
+  }
+  for (const x of [10, 18, 26]) for (const z of [5.4, -11.4]) glowQuad(out, [x, 8.5, z], SPRITE, WARNING, 0.7);
+  for (const [x, z] of ANCHORAGE) {
+    glowQuad(out, [x, 1.9, z], SPRITE, WHITE_LIGHT, 0.9);
+    glowQuad(out, [x, 0, z + 0.8], STREAK, dim(WHITE_LIGHT, 0.6), 0.8);
+  }
+  return out;
+}
+
+function buildShipLights() {
+  const out = [];
+  for (const z of [-1.45, 1.45]) glowQuad(out, [-6.8, 3.6, z], SPRITE, WHITE_LIGHT, 0.8);
+  glowQuad(out, [-6.95, 5.5, 0], SPRITE, WHITE_LIGHT, 0.7);
+  glowQuad(out, [8, 1.5, 0], SPRITE, WHITE_LIGHT, 0.6);
+  glowQuad(out, [0, 4.6, 0], SPRITE, SODIUM, 1);
+  return out;
+}
+
+function upload(gl, data, stride = 2) {
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(data), gl.STATIC_DRAW);
+  return { buf, count: data.length / stride };
 }
 
 function uploadSolid(gl, data) {
@@ -528,10 +655,74 @@ uniform vec3 uLight; uniform vec3 uFog; uniform vec2 uFogRange; uniform vec3 uCa
 void main() {
   vec3 n = normalize(vNormal);
   float diffuse = max(dot(n, uLight), 0.0);
-  vec3 lit = vColor * (0.30 + 0.16 * (0.5 + 0.5 * n.y) + 0.72 * diffuse);
+  vec3 ambient = vec3(0.34, 0.40, 0.52) * (0.6 + 0.4 * (0.5 + 0.5 * n.y));
+  vec3 lit = vColor * (ambient + vec3(0.92, 0.70, 0.55) * 0.5 * diffuse);
   lit = mix(lit, vColor, uEmissive);
   float fog = smoothstep(uFogRange.x, uFogRange.y, distance(vWorld, uCam)) * (1.0 - uEmissive * 0.8);
   gl_FragColor = vec4(mix(lit, uFog, fog), 1.0);
+}`;
+// Blue-hour sky by view elevation (radians): warm glow on the horizon, lilac, dusk blue, deep zenith.
+const SKY_GLSL = `
+vec3 skyColour(float e) {
+  vec3 haze = vec3(0.25, 0.33, 0.41);
+  vec3 glow = vec3(0.90, 0.60, 0.45);
+  vec3 lilac = vec3(0.66, 0.50, 0.58);
+  vec3 dusk = vec3(0.20, 0.33, 0.50);
+  vec3 zenith = vec3(0.04, 0.10, 0.21);
+  if (e < 0.0) return mix(glow, haze, smoothstep(0.0, 0.06, -e));
+  vec3 c = mix(glow, lilac, smoothstep(0.0, 0.07, e));
+  c = mix(c, dusk, smoothstep(0.08, 0.24, e));
+  return mix(c, zenith, smoothstep(0.24, 0.7, e));
+}`;
+const SKY_VS = `
+attribute vec2 aPos;
+varying float vNdcY;
+void main() { vNdcY = aPos.y; gl_Position = vec4(aPos, 1.0, 1.0); }`;
+const SKY_FS = `
+precision mediump float;
+varying float vNdcY;
+uniform float uPitch; uniform float uTanHalfFov;
+${SKY_GLSL}
+void main() { gl_FragColor = vec4(skyColour(uPitch + atan(vNdcY * uTanHalfFov)), 1.0); }`;
+const GLOW_VS = `
+attribute vec3 aCenter; attribute vec2 aCorner; attribute float aKind; attribute vec3 aColor; attribute float aSize;
+uniform mat4 uViewProj; uniform mat4 uModel; uniform vec3 uCam;
+varying vec2 vUV; varying vec3 vColor; varying float vKind; varying float vFade;
+void main() {
+  vec3 c = (uModel * vec4(aCenter, 1.0)).xyz;
+  vec3 p;
+  if (aKind < 0.5) {
+    vec3 f = normalize(uCam - c);
+    vec3 r = cross(vec3(0.0, 1.0, 0.0), f);
+    r = length(r) < 0.001 ? vec3(1.0, 0.0, 0.0) : normalize(r);
+    p = c + (r * aCorner.x + cross(f, r) * aCorner.y) * aSize;
+  } else if (aKind < 1.5) {
+    p = c + vec3(aCorner.x, 0.0, aCorner.y) * aSize;
+  } else {
+    vec2 d = normalize(uCam.xz - c.xz);
+    vec2 side = vec2(-d.y, d.x);
+    vec2 xz = c.xz + side * aCorner.x * aSize * 0.35 + d * (aCorner.y * 0.5 + 0.5) * aSize * 6.0;
+    p = vec3(xz.x, 0.23, xz.y);
+  }
+  vUV = aCorner; vColor = aColor; vKind = aKind;
+  vFade = 1.0 - 0.65 * smoothstep(60.0, 230.0, distance(p, uCam));
+  gl_Position = uViewProj * vec4(p, 1.0);
+}`;
+const GLOW_FS = `
+precision mediump float;
+varying vec2 vUV; varying vec3 vColor; varying float vKind; varying float vFade;
+uniform float uTime;
+void main() {
+  float d = length(vUV);
+  float a;
+  if (vKind < 0.5) a = pow(max(1.0 - d, 0.0), 2.4) * 1.15;
+  else if (vKind < 1.5) a = pow(max(1.0 - d, 0.0), 1.8) * 0.32;
+  else {
+    float along = vUV.y * 0.5 + 0.5;
+    float ripple = 0.55 + 0.45 * sin(along * 38.0 - uTime * 2.6 + vUV.x * 3.0);
+    a = (1.0 - abs(vUV.x)) * (1.0 - along) * ripple * 0.55;
+  }
+  gl_FragColor = vec4(vColor * a * vFade, 1.0);
 }`;
 const WATER_VS = `
 attribute vec2 aXZ;
@@ -551,13 +742,19 @@ const WATER_FS = `
 precision mediump float;
 varying vec3 vWorld; varying vec3 vNormal;
 uniform vec3 uCam; uniform vec3 uLight; uniform vec3 uFog; uniform vec2 uFogRange;
+// Separate from the vertex stage's highp uTime: a uniform shared across stages must match precision or linking fails.
+uniform float uRipple;
+${SKY_GLSL}
 void main() {
-  vec3 n = normalize(vNormal);
+  // Fine ripples per pixel break the broad wave reflections into water-scale detail.
+  vec3 ripple = vec3(sin(vWorld.x * 1.7 + vWorld.z * 0.6 + uRipple * 1.3), 0.0, cos(vWorld.z * 2.1 - vWorld.x * 0.4 - uRipple * 1.1)) * 0.07;
+  vec3 n = normalize(vNormal + ripple);
   vec3 view = normalize(uCam - vWorld);
   float fresnel = pow(1.0 - max(dot(n, view), 0.0), 3.0);
-  vec3 colour = mix(vec3(0.035, 0.16, 0.20), vec3(0.15, 0.36, 0.40), fresnel);
-  float glint = pow(max(dot(reflect(-uLight, n), view), 0.0), 60.0);
-  colour += vec3(0.85, 0.68, 0.46) * glint * 0.5;
+  vec3 sky = skyColour(asin(clamp(reflect(-view, n).y, -1.0, 1.0)));
+  vec3 colour = mix(vec3(0.02, 0.07, 0.11), sky, 0.1 + 0.6 * fresnel);
+  float glint = pow(max(dot(reflect(-uLight, n), view), 0.0), 40.0);
+  colour += vec3(0.95, 0.62, 0.45) * glint * 0.35;
   float fog = smoothstep(uFogRange.x, uFogRange.y, distance(vWorld, uCam));
   gl_FragColor = vec4(mix(colour, uFog, fog), 1.0);
 }`;
@@ -608,6 +805,7 @@ function program(gl, vsSource, fsSource) {
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
+function seeded(seed) { return () => (seed = (seed * 16807) % 2147483647) / 2147483647; }
 function rgb(hex) { return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255); }
 function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
