@@ -17,14 +17,14 @@ const CLIP_ORDER = ['sea', 'journey', 'river'];
 // exit = how the next section arrives: 'continue' keeps the same shot moving, 'tide' rises the next shot from below
 // while this one pushes in toward `toward`.
 const SCENES = {
-  prologue: { clip: 'sea', f: [0, 36], zoom: [1.02, 1.08], focus: [0.55, 0.5], exit: 'tide', toward: [0.72, 0.16], fadeIn: [0.7, 0.92] }, // the 3D globe leads; the sea rises in as the camera dives
-  arrival: { clip: 'journey', f: [0, 39], zoom: [1.0, 1.05], focus: [0.5, 0.5], exit: 'continue' },
-  berth: { clip: 'journey', f: [39, 102], zoom: [1.05, 1.03], focus: [0.5, 0.5], exit: 'continue' },
-  clearance: { clip: 'journey', f: [102, 120], zoom: [1.03, 1.06], focus: [0.42, 0.52], exit: 'tide', toward: [0.36, 0.55] },
-  river: { clip: 'river', f: [0, 76], zoom: [1.02, 1.1], focus: [0.6, 0.5], exit: 'tide', toward: [0.6, 0.45] },
-  road: { clip: 'journey', f: [120, 147], zoom: [1.02, 1.06], focus: [0.45, 0.5], exit: 'continue' },
-  group: { clip: 'journey', f: [149, 149], zoom: [1.08, 1.12], focus: [0.62, 0.4], dim: 0.3, exit: 'continue' },
-  contact: { clip: 'journey', f: [149, 149], zoom: [1.12, 1.16], focus: [0.62, 0.4], dim: 0.34 },
+  prologue: { clip: 'sea', f: [0, 36], zoom: [1.02, 1.08], focus: [0.55, 0.5], exit: 'tide', toward: [0.72, 0.16], fadeIn: [0.7, 0.92], weather: [0, 0.35] }, // the 3D globe leads; the sea rises in as the camera dives
+  arrival: { clip: 'journey', f: [0, 39], zoom: [1.0, 1.05], focus: [0.5, 0.5], exit: 'continue', weather: [0.45, 0.85] },
+  berth: { clip: 'journey', f: [39, 102], zoom: [1.05, 1.03], focus: [0.5, 0.5], exit: 'continue', weather: [1, 0.6] },
+  clearance: { clip: 'journey', f: [102, 120], zoom: [1.03, 1.06], focus: [0.42, 0.52], exit: 'tide', toward: [0.36, 0.55], weather: [0.9, 0.5] },
+  river: { clip: 'river', f: [0, 76], zoom: [1.02, 1.1], focus: [0.6, 0.5], exit: 'tide', toward: [0.6, 0.45], weather: [0, 0.75] },
+  road: { clip: 'journey', f: [120, 147], zoom: [1.02, 1.06], focus: [0.45, 0.5], exit: 'continue', weather: [0.8, 0.6] },
+  group: { clip: 'journey', f: [149, 149], zoom: [1.08, 1.12], focus: [0.62, 0.4], dim: 0.3, exit: 'continue', weather: [0.3, 0.2] },
+  contact: { clip: 'journey', f: [149, 149], zoom: [1.12, 1.16], focus: [0.62, 0.4], dim: 0.34, weather: [0, 0] },
 };
 
 const $ = (s) => document.querySelector(s);
@@ -61,7 +61,7 @@ function locate(y) {
 function shot(spec, p) {
   const focus = SET === 'm' ? [0.5, spec.focus[1]] : spec.focus;
   const fade = spec.fadeIn && threeOn ? smooth(spec.fadeIn[0], spec.fadeIn[1], p) : 1;
-  return { clip: spec.clip, frame: lerp(spec.f[0], spec.f[1], p), zoom: lerp(spec.zoom[0], spec.zoom[1], p), focus, dim: (spec.dim ?? 1) * fade };
+  return { clip: spec.clip, frame: lerp(spec.f[0], spec.f[1], p), zoom: lerp(spec.zoom[0], spec.zoom[1], p), focus, dim: (spec.dim ?? 1) * fade, weather: spec.weather || [0, 0] };
 }
 /** The scene for a scroll position: shot a, optional shot b rising in, and the tide mix between them. */
 function sceneAt(y) {
@@ -75,7 +75,7 @@ function sceneAt(y) {
   if (!N || t <= 0) return { a: shot(S, p), b: null, mix: 0 };
   const from = shot(S, 1), to = shot(N, 0);
   if (S.exit === 'continue' && N.clip === S.clip) {
-    return { a: { clip: S.clip, frame: lerp(from.frame, to.frame, t), zoom: lerp(from.zoom, to.zoom, t), focus: lerp2(from.focus, to.focus, t), dim: lerp(from.dim, to.dim, t) }, b: null, mix: 0 };
+    return { a: { clip: S.clip, frame: lerp(from.frame, to.frame, t), zoom: lerp(from.zoom, to.zoom, t), focus: lerp2(from.focus, to.focus, t), dim: lerp(from.dim, to.dim, t), weather: lerp2(from.weather, to.weather, t) }, b: null, mix: 0 };
   }
   const e = ease(t);
   const toward = SET === 'm' ? [0.5, (S.toward || S.focus)[1]] : (S.toward || S.focus);
@@ -83,6 +83,7 @@ function sceneAt(y) {
     a: { ...from, frame: from.frame + 4 * t, zoom: from.zoom * (1 + 0.35 * e), focus: lerp2(from.focus, toward, e) },
     b: { ...to, zoom: to.zoom * (1 + 0.22 * (1 - e)) },
     mix: clamp((t - 0.15) / 0.7),
+    weather: lerp2(from.weather, to.weather, e),
   };
 }
 
@@ -140,7 +141,7 @@ precision highp float;
 in vec2 vUv; out vec4 o;
 uniform sampler2D uA0, uA1, uB0, uB1;
 uniform vec2 uFocusA, uFocusB, uPointer;
-uniform float uFA, uFB, uZoomA, uZoomB, uDimA, uDimB, uMix, uTime, uAspect, uTexAspect, uGrain, uBlur;
+uniform float uFA, uFB, uZoomA, uZoomB, uDimA, uDimB, uMix, uTime, uAspect, uTexAspect, uGrain, uBlur, uRain, uMotes, uVel, uPhase;
 vec2 cover(vec2 uv, vec2 f, float z){
   vec2 s = uAspect < uTexAspect ? vec2(uAspect/uTexAspect, 1.) : vec2(1., uTexAspect/uAspect);
   s /= z;
@@ -151,6 +152,27 @@ vec3 shotA(vec2 uv){ vec2 t = cover(uv, uFocusA, uZoomA); return mix(texture(uA0
 vec3 shotB(vec2 uv){ vec2 t = cover(uv, uFocusB, uZoomB); return mix(texture(uB0,t).rgb, texture(uB1,t).rgb, uFB)*uDimB; }
 float hash(vec2 p){ p = fract(p*vec2(123.34,456.21)); p += dot(p,p+45.32); return fract(p.x*p.y); }
 float swell(vec2 p){ return .5 + .22*sin(p.x*5.1 + p.y*1.7) + .16*sin(p.x*11.3 - p.y*3.1 + 1.7) + .08*sin(p.x*23.7 + p.y*7.9 + 4.1); }
+// Rain: sparse streaks in three depth layers; faster scrolling stretches them.
+float rainLayer(vec2 uv, float density, float speed, float len, float seed){
+  vec2 p = vec2(uv.x * uAspect * density, uv.y * density * .16 - uTime * speed - uPhase * density * .05);
+  vec2 id = floor(p), f = fract(p);
+  float h = hash(id + seed);
+  if (h < .8) return 0.;
+  float d = abs(f.x - fract(h * 13.7));
+  return smoothstep(.05, 0., d) * smoothstep(0., len, f.y) * smoothstep(1., 1. - len * .5, f.y) * (h - .8) * 5.;
+}
+// Lens lights: soft out-of-focus discs drifting with the scroll at their own depth.
+vec3 lensLights(vec2 uv){
+  vec3 acc = vec3(0.);
+  for (int k = 0; k < 10; k++) {
+    float fk = float(k), depth = .4 + hash(vec2(fk, 3.1));
+    vec2 c = vec2(fract(hash(vec2(fk, 1.3)) + uTime * .004 * depth), fract(hash(vec2(fk, 7.1)) - uPhase * .14 * depth));
+    float r = .03 + .055 * hash(vec2(fk, 9.7));
+    float m = smoothstep(r, r * .55, length((uv - c) * vec2(uAspect, 1.)));
+    acc += mix(vec3(1., .62, .3), vec3(.55, .68, 1.), step(.62, hash(vec2(fk, 5.3)))) * m * .045;
+  }
+  return acc;
+}
 vec3 frameAt(vec2 uv, float m, float band){
   if (m >= .999) return shotB(uv);
   vec3 c = shotA(uv + vec2(0., band*.015));
@@ -174,6 +196,12 @@ void main(){
     col /= 6.;
   } else col = frameAt(uv, m, band);
   col += vec3(.95,.45,.12)*band*.6;
+  if (uRain > .01) {
+    float len = .45 + min(abs(uVel), 2.) * .3;
+    float r = rainLayer(vUv, 22., 1.6, len, 0.) * .12 + rainLayer(vUv, 38., 2.4, len, 7.) * .08 + rainLayer(vUv, 64., 3.4, len, 19.) * .05;
+    col += vec3(.74, .82, .96) * r * uRain;
+  }
+  if (uMotes > .01) col += lensLights(vUv) * uMotes;
   float l = dot(col, vec3(.2126,.7152,.0722));
   col = mix(col, col*vec3(.9,.97,1.1), .5*(1. - smoothstep(.35,.8,l))); // cool the shadows
   // Split-tone: near-white highlights become sodium working light, so every clip carries the brand orange.
@@ -199,7 +227,7 @@ function webglRenderer() {
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
   gl.useProgram(prog);
   const U = {};
-  for (const n of ['uA0', 'uA1', 'uB0', 'uB1', 'uFocusA', 'uFocusB', 'uPointer', 'uFA', 'uFB', 'uZoomA', 'uZoomB', 'uDimA', 'uDimB', 'uMix', 'uTime', 'uAspect', 'uTexAspect', 'uGrain', 'uBlur']) U[n] = gl.getUniformLocation(prog, n);
+  for (const n of ['uA0', 'uA1', 'uB0', 'uB1', 'uFocusA', 'uFocusB', 'uPointer', 'uFA', 'uFB', 'uZoomA', 'uZoomB', 'uDimA', 'uDimB', 'uMix', 'uTime', 'uAspect', 'uTexAspect', 'uGrain', 'uBlur', 'uRain', 'uMotes', 'uVel', 'uPhase']) U[n] = gl.getUniformLocation(prog, n);
   ['uA0', 'uA1', 'uB0', 'uB1'].forEach((n, k) => gl.uniform1i(U[n], k));
   gl.uniform1f(U.uTexAspect, TEX_ASPECT);
   // Software renderers (no GPU) get the low tier: no motion blur.
@@ -259,6 +287,10 @@ function webglRenderer() {
       gl.uniform1f(U.uAspect, canvas.width / canvas.height);
       gl.uniform1f(U.uGrain, 0.04);
       gl.uniform1f(U.uBlur, low ? 0 : fx.blur);
+      // Weather is motion: none under reduced motion or on software renderers.
+      const weather = reduced || low ? [0, 0] : (scene.weather || scene.a.weather || [0, 0]);
+      gl.uniform1f(U.uRain, weather[0]); gl.uniform1f(U.uMotes, weather[1]);
+      gl.uniform1f(U.uVel, fx.vel); gl.uniform1f(U.uPhase, fx.phase);
       gl.uniform2fv(U.uPointer, fx.pointer);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       return true;
@@ -388,6 +420,7 @@ function updateRoute(y) {
 
 // ---------------------------------------------------------------- 3D components: opening globe, group container stack
 let three = null, threeMode = 'none', threeOpacity = -1, hot = -1, listHot = -1;
+let threeStart = 0, frameShare = 0, velNow = 0, flying = false, cursorMode = '';
 const canvas3d = $('#scene3d');
 const leader = $('.leader'), leaderLine = leader.querySelector('line'), leaderDot = leader.querySelector('circle');
 const companyItems = [...document.querySelectorAll('#group .company-list li')];
@@ -399,6 +432,7 @@ async function load3D(low) {
     const names = companyItems.map((li) => li.querySelector('.co-name').textContent.trim());
     three = mod.createScene3D(canvas3d, { landIndices: new Uint16Array(buf), names, reduced, lowTier: low });
     three.setSize(innerWidth, innerHeight);
+    threeStart = performance.now();
     addEventListener('resize', () => three?.setSize(innerWidth, innerHeight));
     threeOn = true;
     root.dataset.three = 'ready';
@@ -414,7 +448,13 @@ function threeState(y) {
   const cut = (x) => (x >= 0.5 ? 1 : 0);
   if (id === 'prologue') return { mode: 'globe', p: reduced ? 0.55 : p, opacity: reduced ? 1 : 1 - smooth(0.78, 0.92, p) };
   if (id === 'road' && t > 0) return { mode: 'stack', p: 0, opacity: reduced ? cut(t) : smooth(0.3, 0.9, t) };
-  if (id === 'group') return { mode: 'stack', p: reduced ? 1 : p, opacity: t > 0 ? 1 - (reduced ? cut(t) : smooth(0.2, 0.8, t)) : 1 };
+  if (id === 'group' && t > 0) {
+    // The stack fades out, then the globe returns for the close.
+    if (reduced) return t >= 0.5 ? { mode: 'outro', p: 0, opacity: 1 } : { mode: 'stack', p: 1, opacity: 1 };
+    return t < 0.5 ? { mode: 'stack', p, opacity: 1 - smooth(0.05, 0.45, t) } : { mode: 'outro', p: 0, opacity: smooth(0.55, 0.95, t) };
+  }
+  if (id === 'group') return { mode: 'stack', p: reduced ? 1 : p, opacity: 1 };
+  if (id === 'contact') return { mode: 'outro', p: reduced ? 0.6 : p, opacity: 1 };
   return { mode: 'none', p: 0, opacity: 0 };
 }
 function render3D(y, now) {
@@ -425,7 +465,9 @@ function render3D(y, now) {
   if (s.mode === 'none' && threeMode === 'none') return;
   threeMode = s.mode;
   const h = s.mode === 'stack' ? (listHot >= 0 ? listHot : hot) : -1;
-  three.render({ mode: s.mode, p: s.p, now, pointer, hot: h });
+  // The globe's dots assemble with the real loading progress, over at least two seconds.
+  three.setBuild(reduced ? 1 : Math.min(frameShare, (now - threeStart) / 2200));
+  three.render({ mode: s.mode, p: s.p, now, pointer, hot: h, vel: velNow });
   if (s.mode === 'stack') {
     companyItems.forEach((li, k) => {
       const c = three.project(k);
@@ -449,18 +491,116 @@ function stackInteractions() {
   addEventListener('pointermove', (e) => {
     if (threeMode !== 'stack' || !three) return;
     const k = e.target.closest('a, button, .company-list li') ? -1 : three.pick(e.clientX, e.clientY);
-    if (k !== hot) { hot = k; document.body.style.cursor = k >= 0 && companyItems[k].querySelector('a') ? 'pointer' : ''; redraw(); }
+    if (k !== hot) { hot = k; const link = k >= 0 && companyItems[k].querySelector('a'); document.body.style.cursor = link ? 'pointer' : ''; cursorMode = link ? 'open' : ''; sound?.cue('hover', k); redraw(); }
   }, { passive: true });
   addEventListener('click', (e) => {
     if (threeMode !== 'stack' || !three || e.target.closest('a, button, input, summary')) return;
     const k = three.pick(e.clientX, e.clientY);
-    companyItems[k]?.querySelector('a')?.click();
+    const link = companyItems[k]?.querySelector('a');
+    if (!link || flying) return;
+    // Fly into the container, then open the company's chapter.
+    flying = true;
+    sound?.cue('fly', k);
+    three.flyTo(k).then(() => { link.click(); three.endFly(); flying = false; });
   });
   companyItems.forEach((li, k) => {
-    const on = () => { listHot = k; redraw(); }, off = () => { listHot = -1; redraw(); };
+    const on = () => { listHot = k; sound?.cue('hover', k); redraw(); }, off = () => { listHot = -1; redraw(); };
     li.addEventListener('pointerenter', on); li.addEventListener('pointerleave', off);
     li.addEventListener('focusin', on); li.addEventListener('focusout', off);
   });
+}
+
+// ---------------------------------------------------------------- sound (opt-in, spatial, generated in the browser)
+// Off until the visitor asks: no autoplay. The audio context is created inside the click (browsers require a
+// gesture); the spatial engine (sound.js) loads only then. No recordings: every sound is synthesised locally.
+let sound = null;
+function soundscape() {
+  const btn = $('#soundToggle'), label = btn.querySelector('.sound-label'), hint = $('#soundHint');
+  let ctx = null, engine = null, on = false, hinted = false;
+  function set(v) {
+    on = v;
+    btn.setAttribute('aria-pressed', String(v));
+    label.textContent = v ? 'Sound on' : 'Sound off';
+    if (v && !ctx) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      ctx = new Ctx({ latencyHint: 'playback' });
+      import('./sound.js').then((m) => { engine = m.createSoundEngine(ctx); engine.enable(on); }).catch(() => { /* the engine failed to load: the page stays silent */ });
+    }
+    if (!ctx) return;
+    if (v) ctx.resume().catch(() => { /* the browser refused to start audio: the toggle still reflects the choice */ });
+    engine?.enable(v);
+    if (v && !hinted) { hinted = true; hint.textContent = 'Best with headphones'; setTimeout(() => { hint.textContent = ''; }, 4200); }
+    if (!v) setTimeout(() => { if (!on && ctx.state === 'running') ctx.suspend().catch(() => { /* already closing */ }); }, 1200);
+  }
+  btn.addEventListener('click', () => set(!on));
+  document.addEventListener('visibilitychange', () => {
+    if (!ctx || !on) return;
+    (document.hidden ? ctx.suspend() : ctx.resume()).catch(() => { /* state already changing */ });
+  });
+  // Sound is optional: if the engine fails, report it once, go quiet and leave the visuals running.
+  const guard = (fn) => {
+    try { fn(); } catch (error) {
+      console.error('sound stopped:', error);
+      engine = null;
+      ctx.suspend().catch(() => { /* already closing */ });
+    }
+  };
+  return {
+    get on() { return on && !!engine; },
+    update(state) { if (on && engine) guard(() => engine.update(state)); },
+    cue(name, k) { if (on && engine) guard(() => engine.cue(name, k)); },
+  };
+}
+/** What the sound engine needs from the scroll position: chapter, progress, weather and the 3D stack. */
+function soundState(y, sc, dt, vel) {
+  const { i, p, t } = locate(y);
+  const id = sections[i].id, ts = three && threeMode === 'stack' ? threeState(y) : null;
+  return {
+    id, next: sections[i + 1]?.id, p, t, exit: SCENES[id].exit, y, w: innerWidth, h: innerHeight, dt, vel, pointer,
+    rain: (sc.weather || sc.a.weather || [0])[0],
+    stack: ts?.mode === 'stack' ? { p: ts.p, count: companyItems.length, project: (k) => three.project(k) } : null,
+  };
+}
+
+// ---------------------------------------------------------------- cursor and magnetic controls (fine pointers only)
+function cursorLayer() {
+  if (!finePointer || reduced) return;
+  const el = $('.cursor');
+  const magnets = [...document.querySelectorAll('.top-actions > *, .intro-begin, .phones a')];
+  let x = innerWidth / 2, y = innerHeight / 2, cx = x, cy = y, seen = false;
+  addEventListener('pointermove', (e) => {
+    x = e.clientX; y = e.clientY;
+    if (!seen) { seen = true; cx = x; cy = y; root.classList.add('has-cursor'); }
+    const over = e.target.closest('a, button, summary');
+    el.classList.toggle('is-link', !!over && cursorMode !== 'open');
+  }, { passive: true });
+  document.addEventListener('pointerleave', () => root.classList.remove('has-cursor'));
+  document.addEventListener('pointerenter', () => { if (seen) root.classList.add('has-cursor'); });
+  const tick = () => {
+    cx += (x - cx) * 0.22; cy += (y - cy) * 0.22;
+    el.style.transform = `translate3d(${cx.toFixed(1)}px, ${cy.toFixed(1)}px, 0)`;
+    el.classList.toggle('is-open', cursorMode === 'open' && threeMode === 'stack');
+    for (const m of magnets) {
+      const r = m.getBoundingClientRect(), mx = r.left + r.width / 2, my = r.top + r.height / 2;
+      const dx = x - mx, dy = y - my, d = Math.hypot(dx, dy), reach = Math.max(r.width, r.height) * 0.9;
+      m.style.translate = d < reach ? `${(dx * 0.18).toFixed(1)}px ${(dy * 0.18).toFixed(1)}px` : '';
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+// ---------------------------------------------------------------- smooth wheel scrolling (desktop, motion allowed)
+let lenisOn = false;
+function smoothScroll() {
+  if (!finePointer || reduced) return;
+  import('./smooth.js').then(({ default: Lenis }) => {
+    const lenis = new Lenis({ lerp: 0.09, wheelMultiplier: 0.95, anchors: false });
+    lenisOn = true;
+    const raf = (t) => { lenis.raf(t); requestAnimationFrame(raf); };
+    requestAnimationFrame(raf);
+  }).catch(() => { /* native scrolling stays */ });
 }
 
 // ---------------------------------------------------------------- boot
@@ -475,19 +615,24 @@ function render(now) {
   lastNow = now;
   const goal = scrollY;
   if (reduced || Math.abs(goal - ys) > innerHeight * 2.5) ys = goal; // long jumps (menu, rail) cut instead of fast-forwarding
-  else ys += (goal - ys) * (1 - Math.exp(-dt * 6));
+  else ys += (goal - ys) * (1 - Math.exp(-dt * (lenisOn ? 12 : 6)));
   const vel = (ys - yPrev) / dt;
   yPrev = ys;
   pointer[0] += (target[0] - pointer[0]) * 0.05; pointer[1] += (target[1] - pointer[1]) * 0.05;
   const k = introStart ? clamp((now - introStart) / 5000) : 0;
   const fx = {
+    vel: reduced ? 0 : clamp(vel / innerHeight, -3, 3),
+    phase: ys / innerHeight,
     lift: reduced ? 1 : 1 + 0.28 * (1 - ease(k)) * clamp(1 - ys / innerHeight),
     blur: reduced ? 0 : clamp(vel / (innerHeight * 2.4), -1, 1) * 0.05,
     pointer,
   };
   updateRoute(ys);
-  const drawn = renderer.frame(sceneAt(ys), now, fx);
+  velNow = fx.vel;
+  const sc = sceneAt(ys);
+  const drawn = renderer.frame(sc, now, fx);
   render3D(ys, now);
+  if (sound?.on) sound.update(soundState(ys, sc, dt, fx.vel));
   return drawn;
 }
 function loop(now) {
@@ -535,6 +680,9 @@ function splitNarration() {
 }
 
 async function boot() {
+  sound = soundscape();
+  cursorLayer();
+  smoothScroll();
   splitNarration();
   measure();
   ys = yPrev = scrollY;
@@ -569,6 +717,7 @@ async function boot() {
   root.dataset.frames = 'loading';
   let shown = false;
   loadFrames(manifest.clips, (loaded, total, skeleton) => {
+    frameShare = Math.min(1, loaded / skeleton);
     if (loaded < skeleton) introCtl?.progress(Math.round((loaded / skeleton) * 100));
     if (loaded === skeleton) {
       root.dataset.frames = 'skeleton';
